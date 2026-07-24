@@ -8,6 +8,13 @@ set -Eeuo pipefail
 # Luego transcribe y, si WhisperX + HF_TOKEN están disponibles, diariza
 # la mezcla como SPEAKER_00, SPEAKER_01, etc.
 
+CONFIG_FILE="$HOME/.config/meetings-transcriptor.env"
+
+if [[ -r "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+fi
+
 BASE_DIR="${BASE_DIR:-$HOME/proyectos/meetings/textos_reuniones}"
 FECHA="$(date '+%Y-%m-%d_%H-%M-%S')"
 RUN_DIR="$BASE_DIR/Reunion_$FECHA"
