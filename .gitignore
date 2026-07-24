@@ -1,0 +1,19 @@
+# Entornos virtuales
+.venv*/
+.venv-*/
+
+# Configuración local
+.env
+*.env
+
+# Cachés
+__pycache__/
+.pytest_cache/
+.cache/
+
+# Modelos descargados (si se guardan dentro del repo)
+models/
+
+# Nunca versionar grabaciones
+../textos_reuniones/
+
