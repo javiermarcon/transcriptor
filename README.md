@@ -157,7 +157,6 @@ Cada perfil representa un proyecto o empresa, por ejemplo:
 Shipii
 motonave
 Powermoto
-ANDIS
 ```
 
 La primera vez que se usa un perfil:
