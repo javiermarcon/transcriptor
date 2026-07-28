@@ -30,3 +30,13 @@ models/
 *.m4a
 *.flac
 *.json
+
+# Packaging / build artifacts
+*.egg-info/
+pip-wheel-metadata/
+dist/
+build/
+PKG-INFO
+
+# Editor
+.vscode/
