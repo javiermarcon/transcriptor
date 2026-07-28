@@ -1,6 +1,10 @@
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+from meetings_transcriber.cli import build_parser
 from meetings_transcriber.config import Settings
 from meetings_transcriber.models import ProfilePaths, RunPaths
-from meetings_transcriber.transcription import build_whisperx_command
+from meetings_transcriber.transcription import build_whisperx_command, import_existing_audio
 
 
 def make_settings(tmp_path):
@@ -50,3 +54,49 @@ def test_command_uses_short_prompt_and_hotwords(tmp_path):
     assert command[command.index("--hotwords") + 1] == "Shipii, Fulfillment, Tienda Nube"
     assert command[command.index("--condition_on_previous_text") + 1] == "False"
     assert command[command.index("--print_progress") + 1] == "True"
+
+
+def test_cli_accepts_multiple_audio_flags():
+    parser = build_parser()
+    args = parser.parse_args([
+        "--profile",
+        "Shipii",
+        "--audio",
+        "one.ogg",
+        "two.ogg",
+        "--audio",
+        "three.ogg",
+    ])
+    assert len(args.audio) == 2
+    assert args.audio[0] == [Path("one.ogg"), Path("two.ogg")]
+    assert args.audio[1] == [Path("three.ogg")]
+
+
+def test_import_existing_audio_concatenates_multiple_sources(tmp_path):
+    src1 = tmp_path / "one.ogg"
+    src2 = tmp_path / "two.ogg"
+    src1.write_text("audio1", encoding="utf-8")
+    src2.write_text("audio2", encoding="utf-8")
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    paths = RunPaths(
+        run_dir,
+        run_dir / "sistema.wav",
+        run_dir / "microfono.wav",
+        run_dir / "reunion_mezclada.wav",
+        run_dir / "reunion_mezclada.json",
+        run_dir / "transcripcion.txt",
+        run_dir / "transcripcion_speakers.txt",
+    )
+
+    fake_result = Mock()
+    fake_result.returncode = 0
+    with patch("meetings_transcriber.transcription.subprocess.run", fake_result) as mock_run:
+        import_existing_audio([src1, src2], paths)
+
+    command = mock_run.call_args.args[0]
+    assert command[0:4] == ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    assert str(src1) in command
+    assert str(src2) in command
+    assert str(paths.mixed_audio) in command

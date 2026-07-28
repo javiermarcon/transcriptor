@@ -85,8 +85,43 @@ def transcribe_whisperx(settings: Settings, profile: ProfilePaths, paths: RunPat
     process_whisperx_json(generated, paths.plain_transcript, paths.speaker_transcript)
 
 
-def import_existing_audio(source: Path, paths: RunPaths) -> None:
-    source = source.expanduser().resolve()
-    if not source.is_file():
-        raise FileNotFoundError(source)
-    shutil.copy2(source, paths.mixed_audio)
+def import_existing_audio(sources: list[Path], paths: RunPaths) -> None:
+    sources = [source.expanduser().resolve() for source in sources]
+    for source in sources:
+        if not source.is_file():
+            raise FileNotFoundError(source)
+
+    if len(sources) == 1:
+        shutil.copy2(sources[0], paths.mixed_audio)
+        return
+
+    inputs: list[str] = []
+    filter_parts: list[str] = []
+    for index, source in enumerate(sources):
+        inputs.extend(["-i", str(source)])
+        filter_parts.append(
+            f"[{index}:a]aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono[a{index}]"
+        )
+    concat_inputs = "".join(f"[a{index}]" for index in range(len(sources)))
+    filter_complex = ";".join(filter_parts) + ";" + f"{concat_inputs}concat=n={len(sources)}:v=0:a=1[out]"
+
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        *inputs,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[out]",
+        "-c:a",
+        "pcm_s16le",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        str(paths.mixed_audio),
+    ]
+    subprocess.run(command, check=True)

@@ -200,12 +200,21 @@ Grabar:
 ./grabar_transcribir_diarizar.sh --profile Shipii
 ```
 
-Procesar un audio existente:
+Procesar uno o más audios existentes:
 
 ```bash
 ./grabar_transcribir_diarizar.sh \
     --profile Shipii \
-    --audio /ruta/reunion_mezclada.wav
+    --audio /ruta/parte1.ogg /ruta/parte2.ogg /ruta/parte3.ogg
+```
+
+También funciona con varias banderas `--audio`:
+
+```bash
+./grabar_transcribir_diarizar.sh \
+    --profile Shipii \
+    --audio /ruta/parte1.ogg \
+    --audio /ruta/parte2.ogg
 ```
 
 Listar perfiles:
