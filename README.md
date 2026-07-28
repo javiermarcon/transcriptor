@@ -72,11 +72,20 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install whisper-ctranslate2 whisperx
 python -m pip install -e '.[dev]'
 
-Si vas a usar solo CPU, conviene instalar una build optimizada para CPU de PyTorch dentro del entorno virtual:
+Si vas a usar solo CPU, conviene instalar una build optimizada para CPU de PyTorch dentro del entorno virtual. Para evitar conflictos ante futuras actualizaciones de dependencias, obtén la versión requerida dinámicamente:
 
 ```bash
-pip install --upgrade --force-reinstall torch --index-url https://download.pytorch.org/whl/cpu
+# Instala primero las dependencias (incluye torch con soporte CUDA)
+pip install whisper-ctranslate2 whisperx
+
+# Extrae la versión de torch que whistperx requiere
+TORCH_VERSION=$(python -c "import torch; print(torch.__version__.split('+')[0])")
+
+# Reinstala esa versión con build CPU-only
+pip install --force-reinstall "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cpu
 ```
+
+Para versiones futuras, el script adaptará automáticamente la versión de torch.
 
 Nota: si tienes instalada una versión de PyTorch compilada con soporte CUDA (por ejemplo `torch 2.8.0+cu128`), pueden aparecer advertencias como "Could not initialize NNPACK! Reason: Unsupported hardware." aunque `DEVICE` esté configurado a `cpu`. Esas líneas son warnings de optimizaciones por CPU (NNPACK) y no implican que el programa esté pidiendo GPU.
 ```
