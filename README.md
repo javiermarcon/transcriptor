@@ -72,23 +72,54 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install whisper-ctranslate2 whisperx
 python -m pip install -e '.[dev]'
 
-Si vas a usar solo CPU, conviene instalar una build optimizada para CPU de PyTorch dentro del entorno virtual. Para evitar conflictos ante futuras actualizaciones de dependencias, obtén la versión requerida dinámicamente:
+Si vas a usar solo CPU, conviene instalar una build optimizada para CPU de PyTorch dentro del entorno virtual. Para evitar conflictos ante futuras actualizaciones de dependencias, obtén las versiones requeridas dinámicamente:
 
 ```bash
 # Instala primero las dependencias (incluye torch con soporte CUDA)
 pip install whisper-ctranslate2 whisperx
 
-# Extrae la versión de torch que whistperx requiere
+# Extrae las versiones de torch, torchaudio y torchvision que whisperx requiere
 TORCH_VERSION=$(python -c "import torch; print(torch.__version__.split('+')[0])")
+TORCHAUDIO_VERSION=$(python -c "import torchaudio; print(torchaudio.__version__.split('+')[0])")
+TORCHVISION_VERSION=$(python -c "import torchvision; print(torchvision.__version__.split('+')[0])")
 
-# Reinstala esa versión con build CPU-only
-pip install --force-reinstall "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cpu
+# Reinstala todas con build CPU-only
+pip install --force-reinstall \
+    "torch==${TORCH_VERSION}" \
+    "torchaudio==${TORCHAUDIO_VERSION}" \
+    "torchvision==${TORCHVISION_VERSION}" \
+    --index-url https://download.pytorch.org/whl/cpu
 ```
 
-Para versiones futuras, el script adaptará automáticamente la versión de torch.
+Para versiones futuras, el script adaptará automáticamente todas las versiones (torch, torchaudio, torchvision).
 
 Nota: si tienes instalada una versión de PyTorch compilada con soporte CUDA (por ejemplo `torch 2.8.0+cu128`), pueden aparecer advertencias como "Could not initialize NNPACK! Reason: Unsupported hardware." aunque `DEVICE` esté configurado a `cpu`. Esas líneas son warnings de optimizaciones por CPU (NNPACK) y no implican que el programa esté pidiendo GPU.
+
+Durante la diarización con `pyannote`, también es normal ver mensajes de `NNPACK` en la consola. Son informativos y no detienen la transcripción ni implican uso de CUDA. Si el proceso te sugiere actualizar el checkpoint de Lightning, en un sistema CPU-only conviene hacerlo con `--map-to-cpu` (o con un pequeño script Python que cargue el checkpoint con `weights_only=False` y lo guarde otra vez):
+
+```bash
+source .venv/bin/activate
+python - <<'PY'
+import torch
+from pathlib import Path
+
+path = Path('.venv/lib/python3.12/site-packages/whisperx/assets/pytorch_model.bin')
+checkpoint = torch.load(path, map_location='cpu', weights_only=False)
+torch.save(checkpoint, path)
+print('Checkpoint actualizado para CPU')
+PY
 ```
+
+Si prefieres usar la utilidad oficial de Lightning, el comando correcto es:
+
+```bash
+source .venv/bin/activate
+python -m lightning.pytorch.utilities.upgrade_checkpoint \
+  .venv/lib/python3.12/site-packages/whisperx/assets/pytorch_model.bin \
+  --map-to-cpu
+```
+
+En algunas versiones recientes de PyTorch, esa utilidad puede fallar por el cambio de `weights_only`; en ese caso el snippet de arriba es una alternativa válida.
 
 Dependencias del sistema:
 
