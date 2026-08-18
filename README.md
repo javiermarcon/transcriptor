@@ -110,7 +110,7 @@ print('Checkpoint actualizado para CPU')
 PY
 ```
 
-Si prefieres usar la utilidad oficial de Lightning, el comando correcto es:
+Si prefieres usar la utilidad oficial de Lightning, ten en cuenta que en esta combinación de PyTorch + Lightning el flag `--map-to-cpu` puede fallar con `pickle.UnpicklingError` por el cambio de `weights_only` en versiones recientes. En ese caso, el snippet de Python de arriba es la opción más fiable.
 
 ```bash
 source .venv/bin/activate
@@ -119,7 +119,7 @@ python -m lightning.pytorch.utilities.upgrade_checkpoint \
   --map-to-cpu
 ```
 
-En algunas versiones recientes de PyTorch, esa utilidad puede fallar por el cambio de `weights_only`; en ese caso el snippet de arriba es una alternativa válida.
+Si el comando anterior falla, usa el snippet de Python mostrado más arriba. En esta configuración, ese método sí funciona.
 
 Dependencias del sistema:
 
