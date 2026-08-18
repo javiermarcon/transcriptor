@@ -4,12 +4,13 @@ import argparse
 import os
 import sys
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 from subprocess import CalledProcessError
 
 from .audio import record_meeting
 from .config import load_settings
-from .profiles import create_run_paths, ensure_profile
+from .profiles import create_run_paths, ensure_profile, load_existing_run_paths
 from .transcription import import_existing_audio, transcribe_whisperx
 
 
@@ -40,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="Procesar uno o más audios existentes",
     )
+    parser.add_argument(
+        "--meeting",
+        type=Path,
+        help="Transcribir una reunión ya grabada usando los audios de esa carpeta",
+    )
     parser.add_argument("--list-profiles", action="store_true")
     parser.add_argument(
         "--config",
@@ -47,6 +53,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path.home() / ".config/meetings-transcriptor.env",
     )
     return parser
+
+
+def ask_transcribe_now(
+    reader: Callable[[str], str] | None = None,
+    is_interactive: Callable[[], bool] | None = None,
+) -> bool:
+    if is_interactive is None:
+        is_interactive = sys.stdin.isatty
+    if not is_interactive():
+        print("Entrada no interactiva: se transcribe automáticamente.")
+        return True
+    if reader is None:
+        reader = input
+    while True:
+        try:
+            answer = reader("¿Transcribir ahora? [S/n] ").strip().lower()
+        except EOFError:
+            return False
+        if answer in {"", "s", "si", "sí", "y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        print("Respondé s para transcribir o n para terminar.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,21 +97,32 @@ def main(argv: list[str] | None = None) -> int:
         if not args.profile:
             parser.error("--profile es obligatorio salvo con --list-profiles")
 
+        audio_sources = [audio for group in args.audio for audio in group] if args.audio else []
+        if args.meeting is not None and audio_sources:
+            parser.error("--audio y --meeting son mutuamente excluyentes")
+
         profile = ensure_profile(settings.base_dir, args.profile)
-        paths = create_run_paths(profile)
+        if args.meeting is not None:
+            paths = load_existing_run_paths(args.meeting, profile)
+        else:
+            paths = create_run_paths(profile)
         print(f"Perfil: {profile.name}")
         print(f"Directorio: {paths.directory}")
         print(f"Prompt breve: {profile.initial_prompt}")
         print(f"Hotwords: {profile.hotwords}")
 
-        audio_sources = [audio for group in args.audio for audio in group] if args.audio else []
         if audio_sources:
             import_existing_audio(audio_sources, paths)
-        else:
+        elif args.meeting is None:
             print("Grabando. Presioná Ctrl+C al terminar.")
             code = record_meeting(settings, paths)
             if code == 255:
                 print("FFmpeg recibió Ctrl+C y cerró correctamente los WAV.")
+            if not ask_transcribe_now():
+                print(f"Grabación guardada en: {paths.directory}")
+                print("No se transcribió. Para transcribir más tarde:")
+                print(f"  --profile {profile.name} --meeting {paths.directory}")
+                return 0
 
         transcribe_whisperx(settings, profile, paths)
         print(f"Transcripción: {paths.plain_transcript}")

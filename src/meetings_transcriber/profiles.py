@@ -33,10 +33,7 @@ def ensure_profile(base_dir: Path, name: str) -> ProfilePaths:
     return ProfilePaths(name, directory, initial_prompt, hotwords)
 
 
-def create_run_paths(profile: ProfilePaths, now: datetime | None = None) -> RunPaths:
-    now = now or datetime.now()
-    directory = profile.directory / f"Reunion_{now:%Y-%m-%d_%H-%M-%S}"
-    directory.mkdir(parents=True, exist_ok=False)
+def run_paths_for_directory(directory: Path) -> RunPaths:
     return RunPaths(
         directory=directory,
         system_audio=directory / "sistema.wav",
@@ -46,6 +43,44 @@ def create_run_paths(profile: ProfilePaths, now: datetime | None = None) -> RunP
         plain_transcript=directory / "transcripcion.txt",
         speaker_transcript=directory / "transcripcion_speakers.txt",
     )
+
+
+def create_run_paths(profile: ProfilePaths, now: datetime | None = None) -> RunPaths:
+    now = now or datetime.now()
+    directory = profile.directory / f"Reunion_{now:%Y-%m-%d_%H-%M-%S}"
+    directory.mkdir(parents=True, exist_ok=False)
+    return run_paths_for_directory(directory)
+
+
+def resolve_meeting_directory(meeting: Path, profile: ProfilePaths) -> Path:
+    expanded = meeting.expanduser()
+    candidates: list[Path] = []
+    if expanded.is_absolute():
+        candidates.append(expanded)
+    else:
+        candidates.append(Path.cwd() / expanded)
+        candidates.append(profile.directory / expanded)
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.is_dir():
+            return resolved
+    tried = ", ".join(str(candidate) for candidate in candidates)
+    raise FileNotFoundError(
+        f"Carpeta de reunión inexistente o no es un directorio: {meeting}. "
+        f"Rutas probadas: {tried}"
+    )
+
+
+def load_existing_run_paths(meeting: Path, profile: ProfilePaths) -> RunPaths:
+    directory = resolve_meeting_directory(meeting, profile)
+    paths = run_paths_for_directory(directory)
+    mixed = paths.mixed_audio
+    if not mixed.is_file() or mixed.stat().st_size <= 0:
+        raise FileNotFoundError(
+            f"No se encontró {mixed.name} válido en {directory}. "
+            "La carpeta debe contener el WAV mezclado de la grabación."
+        )
+    return paths
 
 
 def read_initial_prompt(path: Path, max_chars: int = 180) -> str:

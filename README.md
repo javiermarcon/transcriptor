@@ -14,6 +14,8 @@ Aplicación local para grabar, transcribir y diarizar reuniones. La implementaci
 - Manejo seguro del código `255` de FFmpeg.
 - Limpieza conservadora de repeticiones exactas.
 - Tests unitarios con `pytest`.
+- Pregunta si transcribir después de `Ctrl+C` al grabar.
+- `--meeting` transcribe una carpeta de reunión ya grabada, in situ.
 - Preparado para una futura interfaz Kivy.
 
 ## Estructura
@@ -36,6 +38,8 @@ transcriptor/
 │       └── transcription.py
 └── tests/
     ├── test_audio.py
+    ├── test_cli.py
+    ├── test_config.py
     ├── test_postprocess.py
     ├── test_profiles.py
     ├── test_progress.py
@@ -71,6 +75,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install whisper-ctranslate2 whisperx
 python -m pip install -e '.[dev]'
+```
 
 Si vas a usar solo CPU, conviene instalar una build optimizada para CPU de PyTorch dentro del entorno virtual. Para evitar conflictos ante futuras actualizaciones de dependencias, obtén las versiones requeridas dinámicamente:
 
@@ -225,13 +230,66 @@ español rioplatense de Argentina
 
 ## Uso
 
-Grabar:
+El lanzador público es `./grabar_transcribir_diarizar.sh`. Equivale a
+`python -m meetings_transcriber.cli` dentro del entorno virtual.
+
+### Flags
+
+| Flag | Descripción |
+|---|---|
+| `--profile` / `-p` | Perfil obligatorio salvo con `--list-profiles`. |
+| `--audio` / `-a` | Uno o más audios existentes. Crea una carpeta `Reunion_...` nueva, copia o concatena el audio ahí y transcribe. |
+| `--meeting` | Carpeta de una reunión ya grabada. Usa `reunion_mezclada.wav` de esa carpeta y escribe la transcripción en el mismo lugar. No crea otra `Reunion_...`. |
+| `--list-profiles` | Lista perfiles en el directorio base. |
+| `--config` | Ruta al archivo de entorno. Por defecto `~/.config/meetings-transcriptor.env`. |
+
+`--audio` y `--meeting` son mutuamente excluyentes.
+
+### Grabar
 
 ```bash
 ./grabar_transcribir_diarizar.sh --profile Shipii
 ```
 
-Procesar uno o más audios existentes:
+Arranca FFmpeg y graba `sistema.wav`, `microfono.wav` y `reunion_mezclada.wav` en una carpeta nueva `Reunion_AAAA-MM-DD_HH-MM-SS` dentro del perfil.
+
+Para dejar de grabar, `Ctrl+C`. FFmpeg cierra los WAV y el programa pregunta:
+
+```text
+¿Transcribir ahora? [S/n]
+```
+
+- `S`, Enter, `s`, `si` o `yes`: transcribe y diariza ahora.
+- `n` o `no`: termina sin transcribir. Los audios quedan en la carpeta de la reunión. El programa imprime el comando para transcribir después con `--meeting`.
+- Si la entrada no es una terminal (pipes, tests, CI), transcribe automáticamente.
+
+### Transcribir una reunión ya grabada
+
+```bash
+./grabar_transcribir_diarizar.sh \
+    --profile Shipii \
+    --meeting /home/javier/proyectos/meetings/textos_reuniones/Shipii/Reunion_2026-07-24_11-09-47
+```
+
+También acepta el nombre de la carpeta si está bajo el perfil:
+
+```bash
+./grabar_transcribir_diarizar.sh \
+    --profile Shipii \
+    --meeting Reunion_2026-07-24_11-09-47
+```
+
+Requisitos:
+
+- La carpeta debe existir.
+- Debe contener `reunion_mezclada.wav` con tamaño mayor a cero.
+- El `--profile` aporta `initial_prompt.txt` y `hotwords.txt`. Usá el mismo perfil con el que se grabó.
+
+La salida (`reunion_mezclada.json`, `transcripcion.txt`, `transcripcion_speakers.txt`) se escribe en esa misma carpeta. Si ya había transcripciones, se sobrescriben.
+
+Si la ruta es relativa, primero se busca en el directorio actual y, si no existe, en la carpeta del perfil.
+
+### Procesar audios externos
 
 ```bash
 ./grabar_transcribir_diarizar.sh \
@@ -248,17 +306,28 @@ También funciona con varias banderas `--audio`:
     --audio /ruta/parte2.ogg
 ```
 
-Listar perfiles:
+A diferencia de `--meeting`, esto crea una carpeta `Reunion_...` nueva y copia o concatena los archivos a `reunion_mezclada.wav` ahí. Transcribe de inmediato, sin preguntar.
+
+### Listar perfiles
 
 ```bash
 ./grabar_transcribir_diarizar.sh --list-profiles
 ```
 
-Ejecución directa en Python:
+### Ejecución directa en Python
 
 ```bash
 .venv/bin/python -m meetings_transcriber.cli --profile Shipii
 ```
+
+### Códigos de salida
+
+| Código | Significado |
+|---|---|
+| `0` | Éxito, incluida grabación guardada sin transcribir. |
+| `1` | Error de configuración, archivos, FFmpeg, WhisperX u otra falla de dominio. |
+| `2` | Error de argumentos (por ejemplo `--audio` junto con `--meeting`, o falta `--profile`). |
+| `130` | Interrumpido con `Ctrl+C` fuera de la detención normal de la grabación. |
 
 ## Progreso
 
@@ -295,7 +364,7 @@ No, no, no es un cambio.
 
 ## FFmpeg código 255
 
-Al detener con `Ctrl+C`, FFmpeg puede devolver `255` aunque haya cerrado correctamente los WAV. Se aceptan `0`, `130` y `255`, pero se valida con `ffprobe` que cada archivo exista y tenga duración positiva.
+Al detener con `Ctrl+C`, FFmpeg puede devolver `255` aunque haya cerrado correctamente los WAV. Se aceptan `0`, `130` y `255`, pero se valida con `ffprobe` que cada archivo exista y tenga duración positiva. Después de esa detención, el programa pregunta si transcribir ahora.
 
 ## Tests
 
@@ -323,11 +392,11 @@ La GUI futura debería importar Python directamente, no ejecutar Bash:
 ```python
 from meetings_transcriber.audio import record_meeting
 from meetings_transcriber.config import load_settings
-from meetings_transcriber.profiles import create_run_paths, ensure_profile
+from meetings_transcriber.profiles import create_run_paths, ensure_profile, load_existing_run_paths
 from meetings_transcriber.transcription import transcribe_whisperx
 ```
 
-Una aplicación Kivy podrá listar perfiles, editar prompts y hotwords, iniciar/detener grabación, mostrar progreso, reprocesar audios, abrir transcripciones y mapear `SPEAKER_00` a nombres.
+Una aplicación Kivy podrá listar perfiles, editar prompts y hotwords, iniciar/detener grabación, preguntar si transcribir al cortar, mostrar progreso, reprocesar una carpeta de reunión existente, abrir transcripciones y mapear `SPEAKER_00` a nombres.
 
 ## GPU y monitores
 
