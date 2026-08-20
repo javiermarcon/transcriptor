@@ -77,6 +77,8 @@ def test_build_ffmpeg_command_contains_audio_paths(tmp_path):
     )
     command = build_ffmpeg_command(settings, paths, "sink", "microphone")
     assert "-filter_complex" in command
+    assert command.count("-thread_queue_size") == 2
+    assert command.count("1024") == 2
     assert str(paths.system_audio) in command
     assert str(paths.microphone_audio) in command
     assert str(paths.mixed_audio) in command

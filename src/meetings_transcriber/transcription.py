@@ -98,7 +98,7 @@ def import_existing_audio(sources: list[Path], paths: RunPaths) -> None:
     inputs: list[str] = []
     filter_parts: list[str] = []
     for index, source in enumerate(sources):
-        inputs.extend(["-i", str(source)])
+        inputs.extend(["-thread_queue_size", "1024", "-i", str(source)])
         filter_parts.append(
             f"[{index}:a]aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono[a{index}]"
         )

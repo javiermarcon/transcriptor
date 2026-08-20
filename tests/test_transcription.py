@@ -99,6 +99,8 @@ def test_import_existing_audio_concatenates_multiple_sources(tmp_path):
 
     command = mock_run.call_args.args[0]
     assert command[0:4] == ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    assert command.count("-thread_queue_size") == 2
+    assert command.count("1024") == 2
     assert str(src1) in command
     assert str(src2) in command
     assert str(paths.mixed_audio) in command

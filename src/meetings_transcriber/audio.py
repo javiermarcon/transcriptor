@@ -57,8 +57,8 @@ def build_ffmpeg_command(settings: Settings, paths: RunPaths, sink: str, microph
     )
     return [
         "ffmpeg", "-hide_banner", "-loglevel", "warning",
-        "-f", "pulse", "-i", f"{sink}.monitor",
-        "-f", "pulse", "-i", microphone,
+        "-f", "pulse", "-thread_queue_size", "1024", "-i", f"{sink}.monitor",
+        "-f", "pulse", "-thread_queue_size", "1024", "-i", microphone,
         "-filter_complex", filters,
         "-map", "[sistema_guardar]", "-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1", str(paths.system_audio),
         "-map", "[micro_guardar]", "-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1", str(paths.microphone_audio),
