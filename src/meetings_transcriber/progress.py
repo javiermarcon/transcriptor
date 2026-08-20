@@ -9,7 +9,7 @@ TIMESTAMP_RE = re.compile(
 
 
 def format_clock(seconds: float) -> str:
-    total = max(0, int(round(seconds)))
+    total = max(0, round(seconds))
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
     if hours:

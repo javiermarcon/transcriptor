@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import signal
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .config import Settings
 from .models import RunPaths

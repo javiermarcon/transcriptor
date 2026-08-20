@@ -383,6 +383,15 @@ Lint:
 
 ```bash
 ruff check .
+mypy src
+```
+
+Instalar el hook que ejecuta Ruff, mypy y pytest antes de cada commit:
+
+```bash
+pip install -e '.[dev]'
+.venv/bin/pre-commit install
+.venv/bin/pre-commit run --all-files
 ```
 
 ## Diseño para Kivy

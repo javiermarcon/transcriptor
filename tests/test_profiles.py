@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -42,7 +42,7 @@ def test_initial_prompt_has_length_limit(tmp_path):
 
 def test_create_run_paths(tmp_path):
     profile = ensure_profile(tmp_path, "Shipii")
-    run = create_run_paths(profile, datetime(2026, 7, 24, 11, 9, 47))
+    run = create_run_paths(profile, datetime(2026, 7, 24, 11, 9, 47, tzinfo=UTC))
     assert run.directory.name == "Reunion_2026-07-24_11-09-47"
     assert run.mixed_audio.name == "reunion_mezclada.wav"
 
@@ -96,7 +96,7 @@ def test_load_existing_run_paths_missing_mixed_audio(tmp_path):
     profile = ensure_profile(tmp_path, "Shipii")
     meeting = profile.directory / "Reunion_2026-07-24_11-09-47"
     meeting.mkdir()
-    with pytest.raises(FileNotFoundError, match="reunion_mezclada.wav"):
+    with pytest.raises(FileNotFoundError, match=r"reunion_mezclada\.wav"):
         load_existing_run_paths(meeting, profile)
 
 
@@ -105,5 +105,5 @@ def test_load_existing_run_paths_rejects_empty_mixed_audio(tmp_path):
     meeting = profile.directory / "Reunion_2026-07-24_11-09-47"
     meeting.mkdir()
     (meeting / "reunion_mezclada.wav").write_bytes(b"")
-    with pytest.raises(FileNotFoundError, match="reunion_mezclada.wav"):
+    with pytest.raises(FileNotFoundError, match=r"reunion_mezclada\.wav"):
         load_existing_run_paths(meeting, profile)

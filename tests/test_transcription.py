@@ -200,7 +200,6 @@ def test_build_whisperx_command_requires_hf_token(tmp_path):
 
 
 def test_run_streaming_prints_progress_and_exits_zero(monkeypatch, tmp_path, capsys):
-    import subprocess
 
     class FakePopen:
         def __init__(self, *args, **kwargs):
@@ -222,7 +221,9 @@ def test_run_streaming_prints_progress_and_exits_zero(monkeypatch, tmp_path, cap
 
 def test_run_streaming_raises_on_nonzero_exit(monkeypatch):
     import subprocess
+
     import pytest
+
     from meetings_transcriber.transcription import run_streaming
 
     class FakePopen:
@@ -274,16 +275,17 @@ def test_find_generated_json_raises_when_no_json(tmp_path):
         run_dir / "speakers.txt",
     )
 
-    from meetings_transcriber.transcription import find_generated_json
     import pytest
+
+    from meetings_transcriber.transcription import find_generated_json
 
     with pytest.raises(FileNotFoundError, match="WhisperX terminó sin generar un JSON"):
         find_generated_json(paths)
 
 
 def test_import_existing_audio_single_source_copies_file(tmp_path, monkeypatch):
+
     from meetings_transcriber.models import RunPaths
-    import shutil
 
     src = tmp_path / "one.ogg"
     src.write_text("audio1", encoding="utf-8")

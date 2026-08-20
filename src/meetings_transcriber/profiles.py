@@ -46,7 +46,7 @@ def run_paths_for_directory(directory: Path) -> RunPaths:
 
 
 def create_run_paths(profile: ProfilePaths, now: datetime | None = None) -> RunPaths:
-    now = now or datetime.now()
+    now = now or datetime.now().astimezone()
     directory = profile.directory / f"Reunion_{now:%Y-%m-%d_%H-%M-%S}"
     directory.mkdir(parents=True, exist_ok=False)
     return run_paths_for_directory(directory)

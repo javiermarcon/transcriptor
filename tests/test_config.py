@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from meetings_transcriber.config import _existing_executable, load_settings
 

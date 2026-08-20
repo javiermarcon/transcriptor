@@ -1,6 +1,6 @@
 from pathlib import Path
 from signal import SIGINT
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
