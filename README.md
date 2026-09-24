@@ -80,13 +80,22 @@ python -m pip install whisper-ctranslate2 whisperx
 python -m pip install -e '.[dev]'
 ```
 
-Si vas a usar solo CPU, conviene instalar una build optimizada para CPU de PyTorch dentro del entorno virtual. Para evitar conflictos ante futuras actualizaciones de dependencias, obtén las versiones requeridas dinámicamente:
+`pip install whisperx` suele traer PyTorch con CUDA. Eso es lo adecuado para una NVIDIA (p. ej. RTX 3090). Si en algún momento forzaste la build **CPU-only** (como describe la sección siguiente), podés volver a CUDA con el procedimiento de más abajo.
+
+Dependencias del sistema:
 
 ```bash
-# Instala primero las dependencias (incluye torch con soporte CUDA)
-pip install whisper-ctranslate2 whisperx
+sudo apt install ffmpeg pulseaudio-utils libnotify-bin
+```
 
-# Extrae las versiones de torch, torchaudio y torchvision que whisperx requiere
+### PyTorch solo CPU (laptop sin GPU)
+
+Si vas a usar solo CPU, conviene reemplazar torch/torchaudio/torchvision por builds CPU-only. Para evitar conflictos ante futuras actualizaciones, obtené las versiones dinámicamente:
+
+```bash
+source .venv/bin/activate
+
+# Extrae las versiones de torch, torchaudio y torchvision ya instaladas
 TORCH_VERSION=$(python -c "import torch; print(torch.__version__.split('+')[0])")
 TORCHAUDIO_VERSION=$(python -c "import torchaudio; print(torchaudio.__version__.split('+')[0])")
 TORCHVISION_VERSION=$(python -c "import torchvision; print(torchvision.__version__.split('+')[0])")
@@ -99,7 +108,53 @@ pip install --force-reinstall \
     --index-url https://download.pytorch.org/whl/cpu
 ```
 
-Para versiones futuras, el script adaptará automáticamente todas las versiones (torch, torchaudio, torchvision).
+Verificación esperada:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# Ejemplo: 2.8.0+cpu False
+```
+
+### Volver a PyTorch con CUDA (después de haber instalado CPU-only)
+
+Si antes instalaste las wheels CPU y ahora tenés una NVIDIA (p. ej. GeForce RTX 3090), reinstalá las mismas versiones desde el índice CUDA:
+
+```bash
+cd ~/proyectos/meetings/transcriptor
+source .venv/bin/activate
+
+TORCH_VERSION=$(python -c "import torch; print(torch.__version__.split('+')[0])")
+TORCHAUDIO_VERSION=$(python -c "import torchaudio; print(torchaudio.__version__.split('+')[0])")
+TORCHVISION_VERSION=$(python -c "import torchvision; print(torchvision.__version__.split('+')[0])")
+
+# cu128 encaja con drivers recientes (CUDA 12.8 en el wheel).
+# Alternativas: cu126 o cu124 si tu driver es más viejo.
+# Ver opciones en https://pytorch.org/get-started/locally/
+CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
+
+pip install --force-reinstall \
+    "torch==${TORCH_VERSION}" \
+    "torchaudio==${TORCHAUDIO_VERSION}" \
+    "torchvision==${TORCHVISION_VERSION}" \
+    --index-url "${CUDA_INDEX_URL}"
+```
+
+Verificación esperada:
+
+```bash
+python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'sin GPU')"
+# Ejemplo: 2.8.0+cu128 / True / NVIDIA GeForce RTX 3090
+```
+
+Con `DEVICE=auto` en `~/.config/meetings-transcriptor.env`, la próxima ejecución debería mostrar `Dispositivo: cuda (float16)`.
+
+Notas:
+
+- No hace falta desinstalar a mano: `--force-reinstall` desde el índice CUDA reemplaza `+cpu` por `+cu128` (u otro).
+- El driver NVIDIA debe estar instalado (`nvidia-smi` tiene que listar la placa). El toolkit CUDA completo en el sistema no es obligatorio: el wheel trae las libs que PyTorch necesita.
+- Si `torch.cuda.is_available()` sigue en `False`, revisá el driver y que no quede otra instalación de torch en el PATH; confirmá que estás dentro de `.venv`.
+
+### Warnings de NNPACK y checkpoint en CPU
 
 Nota: si tienes instalada una versión de PyTorch compilada con soporte CUDA (por ejemplo `torch 2.8.0+cu128`), pueden aparecer advertencias como "Could not initialize NNPACK! Reason: Unsupported hardware." aunque `DEVICE` esté configurado a `cpu`. Esas líneas son warnings de optimizaciones por CPU (NNPACK) y no implican que el programa esté pidiendo GPU.
 
@@ -128,12 +183,6 @@ python -m lightning.pytorch.utilities.upgrade_checkpoint \
 ```
 
 Si el comando anterior falla, usa el snippet de Python mostrado más arriba. En esta configuración, ese método sí funciona.
-
-Dependencias del sistema:
-
-```bash
-sudo apt install ffmpeg pulseaudio-utils libnotify-bin
-```
 
 ## Configuración
 
