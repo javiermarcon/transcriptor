@@ -16,6 +16,7 @@ Aplicación local para grabar, transcribir y diarizar reuniones. La implementaci
 - Tests unitarios con `pytest`.
 - Pregunta si transcribir después de `Ctrl+C` al grabar.
 - `--meeting` transcribe una carpeta de reunión ya grabada, in situ.
+- `--list-meetings` lista reuniones del perfil y marca si tienen transcripción.
 - Preparado para una futura interfaz Kivy.
 
 ## Estructura
@@ -241,9 +242,10 @@ El lanzador público es `./grabar_transcribir_diarizar.sh`. Equivale a
 | `--audio` / `-a` | Uno o más audios existentes. Crea una carpeta `Reunion_...` nueva, copia o concatena el audio ahí y transcribe. |
 | `--meeting` | Carpeta de una reunión ya grabada. Usa `reunion_mezclada.wav` de esa carpeta y escribe la transcripción en el mismo lugar. No crea otra `Reunion_...`. |
 | `--list-profiles` | Lista perfiles en el directorio base. |
+| `--list-meetings` | Lista reuniones del `--profile` y marca cuáles tienen o no `transcripcion.txt`. |
 | `--config` | Ruta al archivo de entorno. Por defecto `~/.config/meetings-transcriptor.env`. |
 
-`--audio` y `--meeting` son mutuamente excluyentes.
+`--audio` y `--meeting` son mutuamente excluyentes. `--list-meetings` no se combina con `--audio` ni `--meeting`.
 
 ### Grabar
 
@@ -314,6 +316,27 @@ A diferencia de `--meeting`, esto crea una carpeta `Reunion_...` nueva y copia o
 ./grabar_transcribir_diarizar.sh --list-profiles
 ```
 
+### Listar reuniones de un perfil
+
+```bash
+./grabar_transcribir_diarizar.sh --profile Shipii --list-meetings
+```
+
+Lista carpetas `Reunion_AAAA-MM-DD_HH-MM-SS` del perfil, en orden alfabético (cronológico por el nombre). Cada línea indica el estado de la transcripción:
+
+```text
+Reunion_2026-07-24_11-09-47	con transcripción
+Reunion_2026-07-25_09-00-00	sin transcripción
+```
+
+Se considera **con transcripción** si existe `transcripcion.txt` con tamaño mayor a cero. Si no hay reuniones, imprime un mensaje y sale con código `0`.
+
+Para transcribir una marcada como `sin transcripción`:
+
+```bash
+./grabar_transcribir_diarizar.sh --profile Shipii --meeting Reunion_2026-07-25_09-00-00
+```
+
 ### Ejecución directa en Python
 
 ```bash
@@ -326,7 +349,7 @@ A diferencia de `--meeting`, esto crea una carpeta `Reunion_...` nueva y copia o
 |---|---|
 | `0` | Éxito, incluida grabación guardada sin transcribir. |
 | `1` | Error de configuración, archivos, FFmpeg, WhisperX u otra falla de dominio. |
-| `2` | Error de argumentos (por ejemplo `--audio` junto con `--meeting`, o falta `--profile`). |
+| `2` | Error de argumentos (por ejemplo `--audio` junto con `--meeting`, `--list-meetings` sin `--profile`, o combinaciones inválidas). |
 | `130` | Interrumpido con `Ctrl+C` fuera de la detención normal de la grabación. |
 
 ## Progreso
@@ -401,11 +424,11 @@ La GUI futura debería importar Python directamente, no ejecutar Bash:
 ```python
 from meetings_transcriber.audio import record_meeting
 from meetings_transcriber.config import load_settings
-from meetings_transcriber.profiles import create_run_paths, ensure_profile, load_existing_run_paths
+from meetings_transcriber.profiles import create_run_paths, ensure_profile, list_meetings, load_existing_run_paths
 from meetings_transcriber.transcription import transcribe_whisperx
 ```
 
-Una aplicación Kivy podrá listar perfiles, editar prompts y hotwords, iniciar/detener grabación, preguntar si transcribir al cortar, mostrar progreso, reprocesar una carpeta de reunión existente, abrir transcripciones y mapear `SPEAKER_00` a nombres.
+Una aplicación Kivy podrá listar perfiles, listar reuniones con estado de transcripción, editar prompts y hotwords, iniciar/detener grabación, preguntar si transcribir al cortar, mostrar progreso, reprocesar una carpeta de reunión existente, abrir transcripciones y mapear `SPEAKER_00` a nombres.
 
 ## GPU y monitores
 

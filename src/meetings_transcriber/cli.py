@@ -10,7 +10,7 @@ from subprocess import CalledProcessError
 
 from .audio import record_meeting
 from .config import load_settings
-from .profiles import create_run_paths, ensure_profile, load_existing_run_paths
+from .profiles import create_run_paths, ensure_profile, list_meetings, load_existing_run_paths
 from .transcription import import_existing_audio, transcribe_whisperx
 
 
@@ -48,11 +48,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--list-profiles", action="store_true")
     parser.add_argument(
+        "--list-meetings",
+        action="store_true",
+        help="Listar reuniones del perfil indicando si tienen transcripción",
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         default=Path.home() / ".config/meetings-transcriptor.env",
     )
     return parser
+
+
+def format_meeting_status_line(name: str, has_transcription: bool) -> str:
+    status = "con transcripción" if has_transcription else "sin transcripción"
+    return f"{name}\t{status}"
 
 
 def ask_transcribe_now(
@@ -100,8 +110,19 @@ def main(argv: list[str] | None = None) -> int:
         audio_sources = [audio for group in args.audio for audio in group] if args.audio else []
         if args.meeting is not None and audio_sources:
             parser.error("--audio y --meeting son mutuamente excluyentes")
+        if args.list_meetings and (args.meeting is not None or audio_sources):
+            parser.error("--list-meetings no se combina con --audio ni --meeting")
 
         profile = ensure_profile(settings.base_dir, args.profile)
+        if args.list_meetings:
+            meetings = list_meetings(profile)
+            if not meetings:
+                print(f"No hay reuniones en el perfil {profile.name}.")
+                return 0
+            for meeting in meetings:
+                print(format_meeting_status_line(meeting.name, meeting.has_transcription))
+            return 0
+
         if args.meeting is not None:
             paths = load_existing_run_paths(args.meeting, profile)
         else:

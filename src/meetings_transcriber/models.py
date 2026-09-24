@@ -21,3 +21,10 @@ class RunPaths:
     json_result: Path
     plain_transcript: Path
     speaker_transcript: Path
+
+
+@dataclass(frozen=True)
+class MeetingSummary:
+    name: str
+    directory: Path
+    has_transcription: bool

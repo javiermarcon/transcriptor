@@ -6,7 +6,9 @@ import pytest
 from meetings_transcriber.profiles import (
     create_run_paths,
     ensure_profile,
+    list_meetings,
     load_existing_run_paths,
+    meeting_has_transcription,
     read_hotwords,
     read_initial_prompt,
     run_paths_for_directory,
@@ -107,3 +109,48 @@ def test_load_existing_run_paths_rejects_empty_mixed_audio(tmp_path):
     (meeting / "reunion_mezclada.wav").write_bytes(b"")
     with pytest.raises(FileNotFoundError, match=r"reunion_mezclada\.wav"):
         load_existing_run_paths(meeting, profile)
+
+
+def test_meeting_has_transcription_requires_non_empty_plain(tmp_path):
+    meeting = tmp_path / "Reunion_2026-07-24_11-09-47"
+    meeting.mkdir()
+    paths = run_paths_for_directory(meeting)
+
+    assert meeting_has_transcription(paths) is False
+
+    paths.plain_transcript.write_text("", encoding="utf-8")
+    assert meeting_has_transcription(paths) is False
+
+    paths.plain_transcript.write_text("hola", encoding="utf-8")
+    assert meeting_has_transcription(paths) is True
+
+
+def test_list_meetings_marks_transcription_status(tmp_path):
+    profile = ensure_profile(tmp_path, "Shipii")
+    with_transcript = profile.directory / "Reunion_2026-07-24_11-09-47"
+    without_transcript = profile.directory / "Reunion_2026-07-25_09-00-00"
+    ignored_file = profile.directory / "not_a_meeting.txt"
+    other_dir = profile.directory / "not_reunion_dir"
+
+    with_transcript.mkdir()
+    without_transcript.mkdir()
+    other_dir.mkdir()
+    ignored_file.write_text("x", encoding="utf-8")
+    (with_transcript / "reunion_mezclada.wav").write_bytes(b"audio")
+    (without_transcript / "reunion_mezclada.wav").write_bytes(b"audio")
+    (with_transcript / "transcripcion.txt").write_text("texto", encoding="utf-8")
+
+    meetings = list_meetings(profile)
+
+    assert [item.name for item in meetings] == [
+        "Reunion_2026-07-24_11-09-47",
+        "Reunion_2026-07-25_09-00-00",
+    ]
+    assert meetings[0].has_transcription is True
+    assert meetings[1].has_transcription is False
+    assert meetings[0].directory == with_transcript.resolve()
+
+
+def test_list_meetings_empty_profile(tmp_path):
+    profile = ensure_profile(tmp_path, "Shipii")
+    assert list_meetings(profile) == []

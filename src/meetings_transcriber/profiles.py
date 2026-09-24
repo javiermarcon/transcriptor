@@ -4,9 +4,10 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from .models import ProfilePaths, RunPaths
+from .models import MeetingSummary, ProfilePaths, RunPaths
 
 PROFILE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+MEETING_DIR_RE = re.compile(r"^Reunion_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 DEFAULT_INITIAL_PROMPT = "Conversación informal de trabajo en español rioplatense de Argentina.\n"
 DEFAULT_HOTWORDS = """\
 # Una palabra o frase técnica por línea.
@@ -81,6 +82,27 @@ def load_existing_run_paths(meeting: Path, profile: ProfilePaths) -> RunPaths:
             "La carpeta debe contener el WAV mezclado de la grabación."
         )
     return paths
+
+
+def meeting_has_transcription(paths: RunPaths) -> bool:
+    plain = paths.plain_transcript
+    return plain.is_file() and plain.stat().st_size > 0
+
+
+def list_meetings(profile: ProfilePaths) -> list[MeetingSummary]:
+    meetings: list[MeetingSummary] = []
+    for child in sorted(profile.directory.iterdir()):
+        if not child.is_dir() or not MEETING_DIR_RE.fullmatch(child.name):
+            continue
+        paths = run_paths_for_directory(child)
+        meetings.append(
+            MeetingSummary(
+                name=child.name,
+                directory=child.resolve(),
+                has_transcription=meeting_has_transcription(paths),
+            )
+        )
+    return meetings
 
 
 def read_initial_prompt(path: Path, max_chars: int = 180) -> str:

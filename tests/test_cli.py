@@ -521,3 +521,81 @@ def test_ask_transcribe_now_uses_input_by_default(monkeypatch):
 
     monkeypatch.setattr("builtins.input", lambda _prompt: "n")
     assert ask_transcribe_now(is_interactive=lambda: True) is False
+
+
+def test_parser_accepts_list_meetings_flag():
+    parser = build_parser()
+    args = parser.parse_args(["--profile", "Shipii", "--list-meetings"])
+    assert args.list_meetings is True
+
+
+def test_main_list_meetings_requires_profile(tmp_path, monkeypatch, capsys):
+    env_file = tmp_path / "config.env"
+    env_file.write_text("")
+    monkeypatch.setattr("meetings_transcriber.cli.load_settings", lambda project_dir: make_settings(tmp_path))
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--list-meetings", "--config", str(env_file)])
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 2
+    assert "--profile es obligatorio" in captured.err
+
+
+def test_main_list_meetings_rejects_audio(tmp_path, monkeypatch, capsys):
+    env_file = tmp_path / "config.env"
+    env_file.write_text("")
+    monkeypatch.setattr("meetings_transcriber.cli.load_settings", lambda project_dir: make_settings(tmp_path))
+
+    with pytest.raises(SystemExit) as excinfo:
+        main([
+            "--profile", "Shipii",
+            "--list-meetings",
+            "--audio", "one.ogg",
+            "--config", str(env_file),
+        ])
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 2
+    assert "--list-meetings no se combina con --audio ni --meeting" in captured.err
+
+
+def test_main_list_meetings_prints_status_without_recording(tmp_path, monkeypatch, capsys):
+    env_file = tmp_path / "config.env"
+    env_file.write_text("")
+    monkeypatch.setattr("meetings_transcriber.cli.load_settings", lambda project_dir: make_settings(tmp_path))
+    monkeypatch.setattr(
+        "meetings_transcriber.cli.create_run_paths",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no debe crear reunión")),
+    )
+    monkeypatch.setattr(
+        "meetings_transcriber.cli.record_meeting",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no debe grabar")),
+    )
+
+    profile_dir = tmp_path / "Shipii"
+    with_transcript = profile_dir / "Reunion_2026-07-24_11-09-47"
+    without_transcript = profile_dir / "Reunion_2026-07-25_09-00-00"
+    with_transcript.mkdir(parents=True)
+    without_transcript.mkdir(parents=True)
+    (with_transcript / "transcripcion.txt").write_text("hola", encoding="utf-8")
+
+    result = main(["--profile", "Shipii", "--list-meetings", "--config", str(env_file)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "Reunion_2026-07-24_11-09-47\tcon transcripción" in captured.out
+    assert "Reunion_2026-07-25_09-00-00\tsin transcripción" in captured.out
+
+
+def test_main_list_meetings_empty_prints_message(tmp_path, monkeypatch, capsys):
+    env_file = tmp_path / "config.env"
+    env_file.write_text("")
+    monkeypatch.setattr("meetings_transcriber.cli.load_settings", lambda project_dir: make_settings(tmp_path))
+
+    result = main(["--profile", "Shipii", "--list-meetings", "--config", str(env_file)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No hay reuniones" in captured.out
+    assert "Shipii" in captured.out
