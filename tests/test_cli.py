@@ -202,6 +202,7 @@ def test_main_prints_ffmpeg_ctrlc_message(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("meetings_transcriber.cli.ensure_profile", lambda base_dir, name: profile)
     monkeypatch.setattr("meetings_transcriber.cli.create_run_paths", lambda profile: paths)
     monkeypatch.setattr("meetings_transcriber.cli.record_meeting", lambda settings, paths: 255)
+    monkeypatch.setattr("meetings_transcriber.cli.ask_transcribe_now", lambda: True)
     monkeypatch.setattr("meetings_transcriber.cli.transcribe_whisperx", lambda *args, **kwargs: None)
 
     result = main(["--profile", "Shipii", "--config", str(env_file)])
@@ -209,6 +210,7 @@ def test_main_prints_ffmpeg_ctrlc_message(tmp_path, monkeypatch, capsys):
 
     assert result == 0
     assert "FFmpeg recibió Ctrl+C y cerró correctamente los WAV." in captured.out
+    assert "Dispositivo: cpu (int8)" in captured.out
 
 
 def test_main_debug_prints_traceback_on_error(tmp_path, monkeypatch, capsys):

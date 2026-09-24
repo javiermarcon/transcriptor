@@ -17,6 +17,7 @@ Aplicación local para grabar, transcribir y diarizar reuniones. La implementaci
 - Pregunta si transcribir después de `Ctrl+C` al grabar.
 - `--meeting` transcribe una carpeta de reunión ya grabada, in situ.
 - `--list-meetings` lista reuniones del perfil y marca si tienen transcripción.
+- `DEVICE=auto` elige CUDA o CPU según la máquina; plantilla `meetings-transcriptor.env.example`.
 - Preparado para una futura interfaz Kivy.
 
 ## Estructura
@@ -25,6 +26,7 @@ Aplicación local para grabar, transcribir y diarizar reuniones. La implementaci
 transcriptor/
 ├── pyproject.toml
 ├── README.md
+├── meetings-transcriptor.env.example
 ├── grabar_transcribir_diarizar.sh
 ├── src/
 │   └── meetings_transcriber/
@@ -135,33 +137,91 @@ sudo apt install ffmpeg pulseaudio-utils libnotify-bin
 
 ## Configuración
 
-Archivo:
+Archivo (única fuente de parámetros por máquina):
 
 ```text
 ~/.config/meetings-transcriptor.env
 ```
 
-Ejemplo para CPU:
+Plantilla en el repo:
+
+```bash
+mkdir -p ~/.config
+cp meetings-transcriptor.env.example ~/.config/meetings-transcriptor.env
+chmod 600 ~/.config/meetings-transcriptor.env
+```
+
+Editá el archivo y poné tu `HF_TOKEN`. El CLI lo carga al arrancar (también podés pasar otra ruta con `--config`).
+
+### Dispositivo: CPU o GPU
+
+| Valor de `DEVICE` | Comportamiento |
+|---|---|
+| `auto` (default) | Si PyTorch detecta CUDA (p. ej. GeForce RTX 3090), usa `cuda`; si no, `cpu`. |
+| `cuda` | Fuerza GPU. |
+| `cpu` | Fuerza CPU. |
+
+Si no definís `COMPUTE_TYPE`, se elige solo:
+
+| Dispositivo resuelto | `COMPUTE_TYPE` por defecto |
+|---|---|
+| `cuda` | `float16` |
+| `cpu` | `int8` |
+
+Misma configuración sirve en el escritorio con GPU y en la laptop sin GPU: con `DEVICE=auto` cada máquina elige lo correcto. Al iniciar una grabación o transcripción verás:
+
+```text
+Dispositivo: cuda (float16)
+```
+
+o
+
+```text
+Dispositivo: cpu (int8)
+```
+
+Ejemplo mínimo recomendado (auto):
 
 ```bash
 export HF_TOKEN='hf_REEMPLAZAR'
 export TRANSCRIPTOR_VENV="$HOME/proyectos/meetings/transcriptor/.venv"
 export WHISPERX_BIN="$TRANSCRIPTOR_VENV/bin/whisperx"
 export WHISPER_CTRANSLATE2_BIN="$TRANSCRIPTOR_VENV/bin/whisper-ctranslate2"
-export DEVICE=cpu
-export COMPUTE_TYPE=int8
+export DEVICE=auto
 export MODELO=large-v3
 export BATCH_SIZE=2
 export THREADS=4
 ```
 
-Para GPU NVIDIA, después de instalar correctamente CUDA y PyTorch:
+Forzar CPU (útil para comparar o depurar):
+
+```bash
+export DEVICE=cpu
+export COMPUTE_TYPE=int8
+```
+
+Forzar GPU NVIDIA (después de instalar CUDA y PyTorch con soporte CUDA):
 
 ```bash
 export DEVICE=cuda
 export COMPUTE_TYPE=float16
 ```
 
+Con una RTX 3090 conviene `DEVICE=auto` o `cuda` y, si querés más throughput, subir `BATCH_SIZE` (por ejemplo `8` o `16`) en esa máquina.
+
+### Otras variables
+
+| Variable | Rol | Default |
+|---|---|---|
+| `HF_TOKEN` | Token Hugging Face para diarización | obligatorio para transcribir |
+| `BASE_DIR` | Carpeta de perfiles/reuniones | `~/proyectos/meetings/textos_reuniones` |
+| `WHISPERX_BIN` | Binario WhisperX | `.venv/bin/whisperx` del proyecto |
+| `MODELO` | Modelo Whisper | `large-v3` |
+| `BATCH_SIZE` | Batch de WhisperX | `2` |
+| `THREADS` | Hilos | `4` |
+| `VOLUMEN_SISTEMA` / `VOLUMEN_MICROFONO` | Mezcla al grabar | `0.70` / `2.00` |
+| `SINK` / `MIC` | Dispositivos PulseAudio | defaults del sistema |
+| `VAD_METHOD` / `VAD_ONSET` / `VAD_OFFSET` / `CHUNK_SIZE` | VAD WhisperX | `pyannote` / `0.500` / `0.363` / `30` |
 ## Perfiles
 
 Primera ejecución:

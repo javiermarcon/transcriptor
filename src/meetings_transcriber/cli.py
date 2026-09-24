@@ -129,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
             paths = create_run_paths(profile)
         print(f"Perfil: {profile.name}")
         print(f"Directorio: {paths.directory}")
+        print(f"Dispositivo: {settings.device} ({settings.compute_type})")
         print(f"Prompt breve: {profile.initial_prompt}")
         print(f"Hotwords: {profile.hotwords}")
 
