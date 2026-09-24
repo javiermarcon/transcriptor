@@ -24,6 +24,46 @@ def test_clean_segments_removes_consecutive_duplicates():
     assert [item["text"] for item in clean_segments(segments)] == ["Hola.", "Chau."]
 
 
+def test_clean_segments_filters_known_hallucinations():
+    from meetings_transcriber.postprocess import clean_segments
+
+    segments = [
+        {"text": "Gracias por ver el video.", "speaker": "SPEAKER_00"},
+        {"text": "Hola Mateo.", "speaker": "SPEAKER_00"},
+        {"text": " CC por Antarctica Films Argentina", "speaker": "SPEAKER_01"},
+    ]
+    cleaned = clean_segments(
+        segments,
+        hallucination_phrases=(
+            "gracias por ver el video",
+            "cc por antarctica films argentina",
+        ),
+    )
+    assert [item["text"] for item in cleaned] == ["Hola Mateo."]
+
+
+def test_clean_segments_keeps_text_when_filter_disabled():
+    segments = [{"text": "Gracias por ver el video.", "speaker": "SPEAKER_00"}]
+    cleaned = clean_segments(segments, hallucination_phrases=())
+    assert [item["text"] for item in cleaned] == ["Gracias por ver el video."]
+
+
+def test_is_hallucination_phrase_exact_for_short_and_contains_for_long():
+    from meetings_transcriber.postprocess import is_hallucination_phrase
+
+    phrases = ("gracias", "gracias por ver el video")
+    assert is_hallucination_phrase("Gracias.", phrases) is True
+    assert is_hallucination_phrase("Muchas gracias a todos.", phrases) is False
+    assert is_hallucination_phrase("Bueno, gracias por ver el video completo.", phrases) is True
+
+
+def test_is_hallucination_phrase_empty_text_and_empty_phrase():
+    from meetings_transcriber.postprocess import is_hallucination_phrase
+
+    assert is_hallucination_phrase("   ", ("gracias por ver el video",)) is True
+    assert is_hallucination_phrase("Hola real.", ("  ", "   ")) is False
+
+
 def test_render_transcripts_groups_speakers():
     plain, speakers = render_transcripts([
         {"text": "Hola.", "speaker": "SPEAKER_00"},

@@ -2,16 +2,46 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 SPACE_RE = re.compile(r"\s+")
 SENTENCE_RE = re.compile(r"[¡¿]?[^.!?¡¿\n]+(?:[.!?]+|$)", re.UNICODE)
 
+# Frases típicas de alucinación en silencios (Whisper). Matching casefold/normalize.
+DEFAULT_HALLUCINATION_PHRASES: tuple[str, ...] = (
+    "gracias por ver el video",
+    "thanks for watching",
+    "cc por antarctica films argentina",
+    "subtitles by the amara.org community",
+    "subscribe to my channel",
+    "like and subscribe",
+    "thank you for watching",
+    "amara.org",
+)
+
 
 def normalize(text: str) -> str:
     text = SPACE_RE.sub(" ", text).strip().casefold()
     return text.strip(" \t\r\n.,;:!?¡¿\"'()[]{}")
+
+
+def is_hallucination_phrase(text: str, phrases: Sequence[str]) -> bool:
+    key = normalize(text)
+    if not key:
+        return True
+    for phrase in phrases:
+        needle = normalize(phrase)
+        if not needle:
+            continue
+        if len(needle) < 12:
+            if key == needle:
+                return True
+            continue
+        if needle in key or key in needle:
+            return True
+    return False
 
 
 def collapse_repeated_sentences(text: str) -> str:
@@ -29,13 +59,19 @@ def collapse_repeated_sentences(text: str) -> str:
     return SPACE_RE.sub(" ", " ".join(output)).strip()
 
 
-def clean_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def clean_segments(
+    segments: list[dict[str, Any]],
+    hallucination_phrases: Sequence[str] | None = None,
+) -> list[dict[str, Any]]:
+    phrases = tuple(hallucination_phrases or ())
     cleaned: list[dict[str, Any]] = []
     previous = ""
     for segment in segments:
         text = collapse_repeated_sentences(str(segment.get("text", "")).strip())
         key = normalize(text)
         if not key or key == previous:
+            continue
+        if phrases and is_hallucination_phrase(text, phrases):
             continue
         copy = dict(segment)
         copy["text"] = text
@@ -53,8 +89,11 @@ def segment_speaker(segment: dict[str, Any]) -> str:
     return "SPEAKER_UNKNOWN"
 
 
-def render_transcripts(segments: list[dict[str, Any]]) -> tuple[str, str]:
-    segments = clean_segments(segments)
+def render_transcripts(
+    segments: list[dict[str, Any]],
+    hallucination_phrases: Sequence[str] | None = None,
+) -> tuple[str, str]:
+    segments = clean_segments(segments, hallucination_phrases=hallucination_phrases)
     plain = "\n".join(segment["text"] for segment in segments).rstrip() + "\n"
     speaker_lines: list[str] = []
     current_speaker: str | None = None
@@ -80,8 +119,16 @@ def render_transcripts(segments: list[dict[str, Any]]) -> tuple[str, str]:
     return plain, "\n".join(speaker_lines).rstrip() + "\n"
 
 
-def process_whisperx_json(json_path: Path, plain_path: Path, speaker_path: Path) -> None:
+def process_whisperx_json(
+    json_path: Path,
+    plain_path: Path,
+    speaker_path: Path,
+    hallucination_phrases: Sequence[str] | None = None,
+) -> None:
     data = json.loads(json_path.read_text(encoding="utf-8"))
-    plain, speakers = render_transcripts(data.get("segments", []))
+    plain, speakers = render_transcripts(
+        data.get("segments", []),
+        hallucination_phrases=hallucination_phrases,
+    )
     plain_path.write_text(plain, encoding="utf-8")
     speaker_path.write_text(speakers, encoding="utf-8")

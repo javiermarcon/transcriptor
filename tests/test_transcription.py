@@ -58,6 +58,84 @@ def test_command_uses_short_prompt_and_hotwords(tmp_path):
     assert command[command.index("--print_progress") + 1] == "True"
 
 
+def test_command_includes_quality_and_anti_hallucination_flags(tmp_path):
+    settings = make_settings(tmp_path)
+    settings = Settings(
+        **{
+            **settings.__dict__,
+            "temperature": 0.0,
+            "best_of": 5,
+            "beam_size": 8,
+            "patience": 1.2,
+            "length_penalty": 1.0,
+            "suppress_tokens": "-1",
+            "suppress_numerals": True,
+            "temperature_increment_on_fallback": 0.2,
+            "compression_ratio_threshold": 2.2,
+            "logprob_threshold": -0.8,
+            "no_speech_threshold": 0.7,
+            "min_speakers": 2,
+            "max_speakers": 4,
+            "condition_on_previous_text": False,
+        }
+    )
+    prompt = tmp_path / "initial_prompt.txt"
+    prompt.write_text("Hola", encoding="utf-8")
+    hotwords = tmp_path / "hotwords.txt"
+    hotwords.write_text("Shipii", encoding="utf-8")
+    profile = ProfilePaths("Shipii", tmp_path, prompt, hotwords)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    paths = RunPaths(
+        run_dir,
+        run_dir / "sistema.wav",
+        run_dir / "microfono.wav",
+        run_dir / "reunion_mezclada.wav",
+        run_dir / "reunion_mezclada.json",
+        run_dir / "transcripcion.txt",
+        run_dir / "transcripcion_speakers.txt",
+    )
+
+    command = build_whisperx_command(settings, profile, paths)
+
+    assert command[command.index("--beam_size") + 1] == "8"
+    assert command[command.index("--patience") + 1] == "1.2"
+    assert command[command.index("--length_penalty") + 1] == "1.0"
+    assert command[command.index("--no_speech_threshold") + 1] == "0.7"
+    assert command[command.index("--logprob_threshold") + 1] == "-0.8"
+    assert command[command.index("--compression_ratio_threshold") + 1] == "2.2"
+    assert command[command.index("--min_speakers") + 1] == "2"
+    assert command[command.index("--max_speakers") + 1] == "4"
+    assert "--suppress_numerals" in command
+
+
+def test_command_omits_optional_speaker_bounds_and_length_penalty(tmp_path):
+    settings = make_settings(tmp_path)
+    prompt = tmp_path / "initial_prompt.txt"
+    prompt.write_text("Hola", encoding="utf-8")
+    hotwords = tmp_path / "hotwords.txt"
+    hotwords.write_text("", encoding="utf-8")
+    profile = ProfilePaths("Shipii", tmp_path, prompt, hotwords)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    paths = RunPaths(
+        run_dir,
+        run_dir / "sistema.wav",
+        run_dir / "microfono.wav",
+        run_dir / "reunion_mezclada.wav",
+        run_dir / "reunion_mezclada.json",
+        run_dir / "transcripcion.txt",
+        run_dir / "transcripcion_speakers.txt",
+    )
+
+    command = build_whisperx_command(settings, profile, paths)
+
+    assert "--min_speakers" not in command
+    assert "--max_speakers" not in command
+    assert "--length_penalty" not in command
+    assert "--suppress_numerals" not in command
+
+
 def test_cli_accepts_multiple_audio_flags():
     parser = build_parser()
     args = parser.parse_args([

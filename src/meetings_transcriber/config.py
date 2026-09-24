@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +25,22 @@ class Settings:
     chunk_size: int
     sink: str | None
     microphone: str | None
+    temperature: float = 0.0
+    best_of: int = 5
+    beam_size: int = 5
+    patience: float = 1.0
+    length_penalty: float | None = None
+    suppress_tokens: str = "-1"
+    suppress_numerals: bool = False
+    temperature_increment_on_fallback: float = 0.2
+    compression_ratio_threshold: float = 2.4
+    logprob_threshold: float = -1.0
+    no_speech_threshold: float = 0.6
+    min_speakers: int | None = None
+    max_speakers: int | None = None
+    condition_on_previous_text: bool = False
+    filter_hallucinations: bool = True
+    extra_hallucination_phrases: tuple[str, ...] = ()
 
 
 def _existing_executable(value: str | None) -> Path | None:
@@ -69,6 +85,33 @@ def resolve_device_and_compute_type(
     return resolved_device, resolved_compute
 
 
+def parse_phrase_list(value: str | None) -> tuple[str, ...]:
+    if value is None or not value.strip():
+        return ()
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "si", "sí", "on"}
+
+
+def _optional_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    return int(raw)
+
+
+def _optional_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    return float(raw)
+
+
 def load_settings(
     project_dir: Path | None = None,
     *,
@@ -109,4 +152,36 @@ def load_settings(
         chunk_size=int(os.getenv("CHUNK_SIZE", "30")),
         sink=os.getenv("SINK") or None,
         microphone=os.getenv("MIC") or None,
+        temperature=float(os.getenv("TEMPERATURE", "0")),
+        best_of=int(os.getenv("BEST_OF", "5")),
+        beam_size=int(os.getenv("BEAM_SIZE", "5")),
+        patience=float(os.getenv("PATIENCE", "1.0")),
+        length_penalty=_optional_float("LENGTH_PENALTY"),
+        suppress_tokens=os.getenv("SUPPRESS_TOKENS", "-1"),
+        suppress_numerals=_env_bool("SUPPRESS_NUMERALS", False),
+        temperature_increment_on_fallback=float(
+            os.getenv("TEMPERATURE_INCREMENT_ON_FALLBACK", "0.2")
+        ),
+        compression_ratio_threshold=float(os.getenv("COMPRESSION_RATIO_THRESHOLD", "2.4")),
+        logprob_threshold=float(os.getenv("LOGPROB_THRESHOLD", "-1.0")),
+        no_speech_threshold=float(os.getenv("NO_SPEECH_THRESHOLD", "0.6")),
+        min_speakers=_optional_int("MIN_SPEAKERS"),
+        max_speakers=_optional_int("MAX_SPEAKERS"),
+        condition_on_previous_text=_env_bool("CONDITION_ON_PREVIOUS_TEXT", False),
+        filter_hallucinations=_env_bool("FILTER_HALLUCINATIONS", True),
+        extra_hallucination_phrases=parse_phrase_list(os.getenv("EXTRA_HALLUCINATION_PHRASES")),
     )
+
+
+def hallucination_phrases_for(settings: Settings, defaults: Sequence[str]) -> tuple[str, ...]:
+    if not settings.filter_hallucinations:
+        return ()
+    merged: list[str] = []
+    seen: set[str] = set()
+    for phrase in (*defaults, *settings.extra_hallucination_phrases):
+        key = phrase.casefold().strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(phrase.strip())
+    return tuple(merged)

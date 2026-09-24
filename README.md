@@ -18,6 +18,7 @@ Aplicación local para grabar, transcribir y diarizar reuniones. La implementaci
 - `--meeting` transcribe una carpeta de reunión ya grabada, in situ.
 - `--list-meetings` lista reuniones del perfil y marca si tienen transcripción.
 - `DEVICE=auto` elige CUDA o CPU según la máquina; plantilla `meetings-transcriptor.env.example`.
+- Knobs de WhisperX configurables (beam, VAD, umbrales) y filtro de alucinaciones en posprocesado.
 - Preparado para una futura interfaz Kivy.
 
 ## Estructura
@@ -217,60 +218,121 @@ Si no definís `COMPUTE_TYPE`, se elige solo:
 | `cuda` | `float16` |
 | `cpu` | `int8` |
 
-Misma configuración sirve en el escritorio con GPU y en la laptop sin GPU: con `DEVICE=auto` cada máquina elige lo correcto. Al iniciar una grabación o transcripción verás:
+Misma plantilla con `DEVICE=auto` sirve en escritorio (GPU) y laptop (CPU). Al iniciar una grabación o transcripción verás:
 
 ```text
 Dispositivo: cuda (float16)
 ```
 
-o
+### Perfil optimizado para CPU (laptop)
 
-```text
-Dispositivo: cpu (int8)
-```
-
-Ejemplo mínimo recomendado (auto):
+Prioriza memoria y estabilidad. `BATCH_SIZE` bajo; umbrales anti-alucinación un poco más estrictos en VAD/silencio.
 
 ```bash
 export HF_TOKEN='hf_REEMPLAZAR'
 export TRANSCRIPTOR_VENV="$HOME/proyectos/meetings/transcriptor/.venv"
 export WHISPERX_BIN="$TRANSCRIPTOR_VENV/bin/whisperx"
 export WHISPER_CTRANSLATE2_BIN="$TRANSCRIPTOR_VENV/bin/whisper-ctranslate2"
-export DEVICE=auto
+
+export DEVICE=cpu
+export COMPUTE_TYPE=int8
 export MODELO=large-v3
 export BATCH_SIZE=2
 export THREADS=4
+
+export VAD_METHOD=pyannote
+export VAD_ONSET=0.55
+export VAD_OFFSET=0.40
+export CHUNK_SIZE=30
+
+export TEMPERATURE=0
+export BEAM_SIZE=5
+export PATIENCE=1.0
+export COMPRESSION_RATIO_THRESHOLD=2.4
+export LOGPROB_THRESHOLD=-1.0
+export NO_SPEECH_THRESHOLD=0.65
+export CONDITION_ON_PREVIOUS_TEXT=0
+export FILTER_HALLUCINATIONS=1
 ```
 
-Forzar CPU (útil para comparar o depurar):
+Usá PyTorch CPU-only en esa máquina (sección de instalación).
+
+### Perfil optimizado para CUDA (p. ej. RTX 3090)
+
+Valores validados en escritorio con RTX 3090 (buen equilibrio vocabulario / cobertura / sin basura de silencio). Son los mismos que trae `meetings-transcriptor.env.example`.
 
 ```bash
-export DEVICE=cpu
-export COMPUTE_TYPE=int8
-```
+export HF_TOKEN='hf_REEMPLAZAR'
+export TRANSCRIPTOR_VENV="$HOME/proyectos/meetings/transcriptor/.venv"
+export WHISPERX_BIN="$TRANSCRIPTOR_VENV/bin/whisperx"
+export WHISPER_CTRANSLATE2_BIN="$TRANSCRIPTOR_VENV/bin/whisper-ctranslate2"
 
-Forzar GPU NVIDIA (después de instalar CUDA y PyTorch con soporte CUDA):
-
-```bash
 export DEVICE=cuda
 export COMPUTE_TYPE=float16
+export MODELO=large-v3
+export BATCH_SIZE=16
+export THREADS=8
+
+export VAD_METHOD=pyannote
+export VAD_ONSET=0.45
+export VAD_OFFSET=0.363
+export CHUNK_SIZE=30
+
+export TEMPERATURE=0
+export BEST_OF=5
+export BEAM_SIZE=8
+export PATIENCE=1.0
+export TEMPERATURE_INCREMENT_ON_FALLBACK=0.2
+export COMPRESSION_RATIO_THRESHOLD=2.4
+export LOGPROB_THRESHOLD=-1.0
+export NO_SPEECH_THRESHOLD=0.55
+export CONDITION_ON_PREVIOUS_TEXT=0
+export FILTER_HALLUCINATIONS=1
+# Opcional si conocés cuántas personas hay:
+# export MIN_SPEAKERS=2
+# export MAX_SPEAKERS=5
 ```
 
-Con una RTX 3090 conviene `DEVICE=auto` o `cuda` y, si querés más throughput, subir `BATCH_SIZE` (por ejemplo `8` o `16`) en esa máquina.
+Notas:
 
-### Otras variables
+- `BATCH_SIZE` alto acelera; no mejora fidelidad.
+- `VAD_ONSET=0.45` + `NO_SPEECH_THRESHOLD=0.55` recupera más habla baja/rápida que umbrales más estrictos; el filtro de alucinaciones limpia basura residual.
+- Si cortás habla real, bajá un poco más `VAD_ONSET` / `NO_SPEECH_THRESHOLD`; si vuelve basura de silencio, subilos.
+- `hotwords.txt` ayuda con nombres (`Shipii`), pero Whisper igual puede escribir variantes fonéticas en algunos tramos; no es un diccionario forzoso.
+- `FILTER_HALLUCINATIONS=1` elimina en posprocesado frases típicas de silencio (`gracias por ver el video`, créditos, etc.). Ampliá con `EXTRA_HALLUCINATION_PHRASES`.
+
+### Variables de configuración
 
 | Variable | Rol | Default |
 |---|---|---|
-| `HF_TOKEN` | Token Hugging Face para diarización | obligatorio para transcribir |
-| `BASE_DIR` | Carpeta de perfiles/reuniones | `~/proyectos/meetings/textos_reuniones` |
-| `WHISPERX_BIN` | Binario WhisperX | `.venv/bin/whisperx` del proyecto |
+| `HF_TOKEN` | Token Hugging Face (diarización) | obligatorio para transcribir |
+| `BASE_DIR` | Perfiles/reuniones | `~/proyectos/meetings/textos_reuniones` |
+| `WHISPERX_BIN` | Binario WhisperX | `.venv/bin/whisperx` |
+| `DEVICE` | `auto` / `cuda` / `cpu` | `auto` |
+| `COMPUTE_TYPE` | `float16` / `int8` / `float32` | según device |
 | `MODELO` | Modelo Whisper | `large-v3` |
-| `BATCH_SIZE` | Batch de WhisperX | `2` |
+| `BATCH_SIZE` | Batch WhisperX | `2` |
 | `THREADS` | Hilos | `4` |
+| `VAD_METHOD` | `pyannote` o `silero` | `pyannote` |
+| `VAD_ONSET` / `VAD_OFFSET` | Sensibilidad VAD | `0.500` / `0.363` |
+| `CHUNK_SIZE` | Fusión de segmentos VAD (s) | `30` |
+| `TEMPERATURE` | Sampling (0 = beam search) | `0` |
+| `BEST_OF` | Candidatos si temperature > 0 | `5` |
+| `BEAM_SIZE` | Ancho de beam | `5` |
+| `PATIENCE` | Paciencia del beam | `1.0` |
+| `LENGTH_PENALTY` | Penalización de longitud (opcional) | sin flag |
+| `SUPPRESS_TOKENS` | Tokens a suprimir | `-1` |
+| `SUPPRESS_NUMERALS` | `1`/`0` suprimir numerales | `0` |
+| `TEMPERATURE_INCREMENT_ON_FALLBACK` | Sube temperature al fallar umbrales | `0.2` |
+| `COMPRESSION_RATIO_THRESHOLD` | Descarta decodificaciones “repetitivas” | `2.4` |
+| `LOGPROB_THRESHOLD` | Descarta baja confianza | `-1.0` |
+| `NO_SPEECH_THRESHOLD` | Trata segmento como silencio | `0.6` |
+| `CONDITION_ON_PREVIOUS_TEXT` | Condicionar con texto previo | `0` (recomendado) |
+| `MIN_SPEAKERS` / `MAX_SPEAKERS` | Cotas de diarización (opcionales) | sin flag |
+| `FILTER_HALLUCINATIONS` | Filtrar frases basura en posprocesado | `1` |
+| `EXTRA_HALLUCINATION_PHRASES` | Frases extra, separadas por coma | vacío |
 | `VOLUMEN_SISTEMA` / `VOLUMEN_MICROFONO` | Mezcla al grabar | `0.70` / `2.00` |
-| `SINK` / `MIC` | Dispositivos PulseAudio | defaults del sistema |
-| `VAD_METHOD` / `VAD_ONSET` / `VAD_OFFSET` / `CHUNK_SIZE` | VAD WhisperX | `pyannote` / `0.500` / `0.363` / `30` |
+| `SINK` / `MIC` | PulseAudio | defaults del sistema |
 ## Perfiles
 
 Primera ejecución:
@@ -479,20 +541,28 @@ Es progreso sobre la duración de audio transcripta, no una predicción exacta d
 
 ## Reducción de alucinaciones
 
-La ejecución usa:
+La ejecución usa (valores por defecto o los del `.env`):
 
 ```text
 --condition_on_previous_text False
 --vad_method pyannote
+--no_speech_threshold / --logprob_threshold / --compression_ratio_threshold
 --initial_prompt <texto breve>
 --hotwords <vocabulario>
 ```
 
-El posprocesado elimina segmentos u oraciones consecutivas idénticas. Conserva repeticiones naturales como:
+El posprocesado:
+
+- elimina segmentos u oraciones consecutivas idénticas;
+- con `FILTER_HALLUCINATIONS=1`, descarta frases típicas de silencio (`gracias por ver el video`, créditos de subtítulos, etc.).
+
+Conserva repeticiones naturales como:
 
 ```text
 No, no, no es un cambio.
 ```
+
+Los `hotwords` mejoran nombres frecuentes pero **no fuerzan** cada ocurrencia: en audio ruidoso o rápido Whisper puede seguir escribiendo variantes (`Jipi` por `Shipii`). Ajustá VAD/umbrales y el filtro de frases para la basura de silencios.
 
 ## FFmpeg código 255
 

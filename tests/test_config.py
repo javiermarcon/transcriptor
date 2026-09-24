@@ -1,4 +1,6 @@
 
+from pathlib import Path
+
 from meetings_transcriber.config import (
     _existing_executable,
     detect_cuda_available,
@@ -128,6 +130,108 @@ def test_load_settings_auto_selects_cuda(tmp_path, monkeypatch):
 
     assert settings.device == "cuda"
     assert settings.compute_type == "float16"
+
+
+def test_load_settings_reads_quality_knobs(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEVICE", "cuda")
+    monkeypatch.setenv("COMPUTE_TYPE", "float16")
+    monkeypatch.setenv("TEMPERATURE", "0")
+    monkeypatch.setenv("BEST_OF", "5")
+    monkeypatch.setenv("BEAM_SIZE", "8")
+    monkeypatch.setenv("PATIENCE", "1.2")
+    monkeypatch.setenv("LENGTH_PENALTY", "1.0")
+    monkeypatch.setenv("SUPPRESS_TOKENS", "-1")
+    monkeypatch.setenv("SUPPRESS_NUMERALS", "1")
+    monkeypatch.setenv("TEMPERATURE_INCREMENT_ON_FALLBACK", "0.2")
+    monkeypatch.setenv("COMPRESSION_RATIO_THRESHOLD", "2.2")
+    monkeypatch.setenv("LOGPROB_THRESHOLD", "-0.8")
+    monkeypatch.setenv("NO_SPEECH_THRESHOLD", "0.7")
+    monkeypatch.setenv("MIN_SPEAKERS", "2")
+    monkeypatch.setenv("MAX_SPEAKERS", "5")
+    monkeypatch.setenv("CONDITION_ON_PREVIOUS_TEXT", "false")
+    monkeypatch.setenv("FILTER_HALLUCINATIONS", "1")
+    monkeypatch.setenv(
+        "EXTRA_HALLUCINATION_PHRASES",
+        "frase inventada, otra basura",
+    )
+
+    settings = load_settings(tmp_path, cuda_available=lambda: True)
+
+    assert settings.beam_size == 8
+    assert settings.patience == 1.2
+    assert settings.length_penalty == 1.0
+    assert settings.suppress_numerals is True
+    assert settings.no_speech_threshold == 0.7
+    assert settings.logprob_threshold == -0.8
+    assert settings.compression_ratio_threshold == 2.2
+    assert settings.min_speakers == 2
+    assert settings.max_speakers == 5
+    assert settings.condition_on_previous_text is False
+    assert settings.filter_hallucinations is True
+    assert settings.extra_hallucination_phrases == ("frase inventada", "otra basura")
+
+
+def test_parse_phrase_list_splits_commas_and_strips():
+    from meetings_transcriber.config import parse_phrase_list
+
+    assert parse_phrase_list("  a, b ,,c  ") == ("a", "b", "c")
+    assert parse_phrase_list(None) == ()
+    assert parse_phrase_list("") == ()
+
+
+def test_hallucination_phrases_for_merges_defaults_and_extras():
+    from meetings_transcriber.config import Settings, hallucination_phrases_for
+
+    settings = Settings(
+        base_dir=Path("/tmp"),
+        whisperx_bin=None,
+        whisper_ctranslate2_bin=None,
+        hf_token=None,
+        model="large-v3",
+        batch_size=2,
+        threads=4,
+        device="cpu",
+        compute_type="int8",
+        volume_system=0.7,
+        volume_microphone=2.0,
+        vad_method="pyannote",
+        vad_onset=0.5,
+        vad_offset=0.363,
+        chunk_size=30,
+        sink=None,
+        microphone=None,
+        filter_hallucinations=True,
+        extra_hallucination_phrases=("frase inventada", "gracias por ver el video"),
+    )
+    phrases = hallucination_phrases_for(settings, ("gracias por ver el video", "otra"))
+    assert phrases == ("gracias por ver el video", "otra", "frase inventada")
+
+
+def test_hallucination_phrases_for_empty_when_filter_disabled():
+    from meetings_transcriber.config import Settings, hallucination_phrases_for
+
+    settings = Settings(
+        base_dir=Path("/tmp"),
+        whisperx_bin=None,
+        whisper_ctranslate2_bin=None,
+        hf_token=None,
+        model="large-v3",
+        batch_size=2,
+        threads=4,
+        device="cpu",
+        compute_type="int8",
+        volume_system=0.7,
+        volume_microphone=2.0,
+        vad_method="pyannote",
+        vad_onset=0.5,
+        vad_offset=0.363,
+        chunk_size=30,
+        sink=None,
+        microphone=None,
+        filter_hallucinations=False,
+        extra_hallucination_phrases=("frase inventada",),
+    )
+    assert hallucination_phrases_for(settings, ("gracias por ver el video",)) == ()
 
 
 def test_detect_cuda_available_false_when_torch_missing(monkeypatch):
