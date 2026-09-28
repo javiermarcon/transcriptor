@@ -209,7 +209,7 @@ def test_main_prints_ffmpeg_ctrlc_message(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "FFmpeg recibió Ctrl+C y cerró correctamente los WAV." in captured.out
+    assert "FFmpeg recibió Ctrl+C y cerró correctamente los archivos de grabación." in captured.out
     assert "Dispositivo: cpu (int8)" in captured.out
 
 

@@ -47,6 +47,7 @@ def test_create_run_paths(tmp_path):
     run = create_run_paths(profile, datetime(2026, 7, 24, 11, 9, 47, tzinfo=UTC))
     assert run.directory.name == "Reunion_2026-07-24_11-09-47"
     assert run.mixed_audio.name == "reunion_mezclada.wav"
+    assert run.video == run.directory / "reunion.mp4"
 
 
 def test_run_paths_for_directory_uses_canonical_names(tmp_path):
@@ -57,6 +58,7 @@ def test_run_paths_for_directory_uses_canonical_names(tmp_path):
     assert paths.system_audio == directory / "sistema.wav"
     assert paths.microphone_audio == directory / "microfono.wav"
     assert paths.mixed_audio == directory / "reunion_mezclada.wav"
+    assert paths.video == directory / "reunion.mp4"
     assert paths.json_result == directory / "reunion_mezclada.json"
     assert paths.plain_transcript == directory / "transcripcion.txt"
     assert paths.speaker_transcript == directory / "transcripcion_speakers.txt"
@@ -74,6 +76,8 @@ def test_load_existing_run_paths_uses_meeting_folder(tmp_path):
     assert paths.mixed_audio == meeting.resolve() / "reunion_mezclada.wav"
     assert paths.plain_transcript == meeting.resolve() / "transcripcion.txt"
     assert paths.speaker_transcript == meeting.resolve() / "transcripcion_speakers.txt"
+    assert paths.video == meeting.resolve() / "reunion.mp4"
+    assert not paths.video.exists()
 
 
 def test_load_existing_run_paths_resolves_name_under_profile(tmp_path):

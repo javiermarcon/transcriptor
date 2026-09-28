@@ -84,6 +84,9 @@ def test_load_settings_reads_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("CHUNK_SIZE", "45")
     monkeypatch.setenv("SINK", "monitor")
     monkeypatch.setenv("MIC", "source")
+    monkeypatch.setenv("RECORD_VIDEO", "false")
+    monkeypatch.setenv("VIDEO_MONITOR", "DP-1")
+    monkeypatch.setenv("VIDEO_FPS", "12")
 
     settings = load_settings(tmp_path)
 
@@ -103,6 +106,9 @@ def test_load_settings_reads_environment(tmp_path, monkeypatch):
     assert settings.chunk_size == 45
     assert settings.sink == "monitor"
     assert settings.microphone == "source"
+    assert settings.record_video is False
+    assert settings.video_monitor == "DP-1"
+    assert settings.video_fps == 12
     assert settings.base_dir == (tmp_path / "textos").expanduser()
 
 
@@ -120,6 +126,17 @@ def test_load_settings_defaults_to_auto_device(tmp_path, monkeypatch):
 
     assert settings.device == "cpu"
     assert settings.compute_type == "int8"
+    assert settings.record_video is True
+    assert settings.video_monitor == "primary"
+    assert settings.video_fps == 10
+
+
+def test_load_settings_rejects_non_positive_video_fps(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setenv("VIDEO_FPS", "0")
+    with pytest.raises(ValueError, match="VIDEO_FPS debe ser mayor que cero"):
+        load_settings(tmp_path, cuda_available=lambda: False)
 
 
 def test_load_settings_auto_selects_cuda(tmp_path, monkeypatch):

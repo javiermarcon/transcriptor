@@ -25,6 +25,9 @@ class Settings:
     chunk_size: int
     sink: str | None
     microphone: str | None
+    record_video: bool = False
+    video_monitor: str = "primary"
+    video_fps: int = 10
     temperature: float = 0.0
     best_of: int = 5
     beam_size: int = 5
@@ -134,6 +137,14 @@ def load_settings(
         cuda_available=cuda_available,
     )
 
+    video_fps = int(os.getenv("VIDEO_FPS", "10"))
+    if video_fps <= 0:
+        raise ValueError(f"VIDEO_FPS debe ser mayor que cero: {video_fps}")
+
+    video_monitor = os.getenv("VIDEO_MONITOR", "primary").strip()
+    if not video_monitor:
+        raise ValueError("VIDEO_MONITOR no puede estar vacío")
+
     return Settings(
         base_dir=Path(os.getenv("BASE_DIR", str(Path.home() / "proyectos/meetings/textos_reuniones"))).expanduser(),
         whisperx_bin=whisperx,
@@ -152,6 +163,9 @@ def load_settings(
         chunk_size=int(os.getenv("CHUNK_SIZE", "30")),
         sink=os.getenv("SINK") or None,
         microphone=os.getenv("MIC") or None,
+        record_video=_env_bool("RECORD_VIDEO", True),
+        video_monitor=video_monitor,
+        video_fps=video_fps,
         temperature=float(os.getenv("TEMPERATURE", "0")),
         best_of=int(os.getenv("BEST_OF", "5")),
         beam_size=int(os.getenv("BEAM_SIZE", "5")),

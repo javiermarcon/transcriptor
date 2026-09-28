@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Grabando. Presioná Ctrl+C al terminar.")
             code = record_meeting(settings, paths)
             if code == 255:
-                print("FFmpeg recibió Ctrl+C y cerró correctamente los WAV.")
+                print("FFmpeg recibió Ctrl+C y cerró correctamente los archivos de grabación.")
             if not ask_transcribe_now():
                 print(f"Grabación guardada en: {paths.directory}")
                 print("No se transcribió. Para transcribir más tarde:")

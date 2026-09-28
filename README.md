@@ -61,6 +61,7 @@ textos_reuniones/
 │       ├── microfono.wav
 │       ├── reunion_mezclada.wav
 │       ├── reunion_mezclada.json
+│       ├── reunion.mp4
 │       ├── sistema.wav
 │       ├── transcripcion.txt
 │       └── transcripcion_speakers.txt
@@ -88,6 +89,8 @@ Dependencias del sistema:
 ```bash
 sudo apt install ffmpeg pulseaudio-utils libnotify-bin
 ```
+
+La grabación de video en GNOME/X11 también requiere `xrandr` (paquete `x11-xserver-utils`).
 
 ### PyTorch solo CPU (laptop sin GPU)
 
@@ -333,6 +336,9 @@ Notas:
 | `EXTRA_HALLUCINATION_PHRASES` | Frases extra, separadas por coma | vacío |
 | `VOLUMEN_SISTEMA` / `VOLUMEN_MICROFONO` | Mezcla al grabar | `0.70` / `2.00` |
 | `SINK` / `MIC` | PulseAudio | defaults del sistema |
+| `RECORD_VIDEO` | Grabar el monitor y audio mezclado en MP4 | `true` |
+| `VIDEO_MONITOR` | Salida `primary` de xrandr o nombre explícito | `primary` |
+| `VIDEO_FPS` | Frames por segundo de la captura | `10` |
 ## Perfiles
 
 Primera ejecución:
@@ -424,7 +430,13 @@ El lanzador público es `./grabar_transcribir_diarizar.sh`. Equivale a
 ./grabar_transcribir_diarizar.sh --profile Shipii
 ```
 
-Arranca FFmpeg y graba `sistema.wav`, `microfono.wav` y `reunion_mezclada.wav` en una carpeta nueva `Reunion_AAAA-MM-DD_HH-MM-SS` dentro del perfil.
+Arranca una única ejecución de FFmpeg y graba `sistema.wav`, `microfono.wav`,
+`reunion_mezclada.wav` y, con `RECORD_VIDEO=true`, `reunion.mp4` en una carpeta nueva
+`Reunion_AAAA-MM-DD_HH-MM-SS` dentro del perfil. El MP4 captura solamente el monitor
+seleccionado por `VIDEO_MONITOR`, incluye el cursor y lleva la misma mezcla de audio.
+
+Con `RECORD_VIDEO=false`, la grabación conserva el flujo anterior de solo audio y no
+requiere `DISPLAY` ni `xrandr`.
 
 Para dejar de grabar, `Ctrl+C`. FFmpeg cierra los WAV y el programa pregunta:
 
@@ -566,7 +578,11 @@ Los `hotwords` mejoran nombres frecuentes pero **no fuerzan** cada ocurrencia: e
 
 ## FFmpeg código 255
 
-Al detener con `Ctrl+C`, FFmpeg puede devolver `255` aunque haya cerrado correctamente los WAV. Se aceptan `0`, `130` y `255`, pero se valida con `ffprobe` que cada archivo exista y tenga duración positiva. Después de esa detención, el programa pregunta si transcribir ahora.
+Al detener con `Ctrl+C`, FFmpeg puede devolver `255` aunque haya cerrado correctamente los
+archivos. Se aceptan `0`, `130` y `255`, pero se valida con `ffprobe` que cada WAV exista y
+tenga duración positiva. Cuando el video está habilitado también se exige un MP4 legible,
+con duración positiva y streams de audio y video. Después de esa detención, el programa
+pregunta si transcribir ahora.
 
 ## Tests
 
