@@ -6,6 +6,7 @@ import pytest
 
 from meetings_transcriber.audio import (
     Monitor,
+    VideoTarget,
     build_ffmpeg_command,
     command_output,
     detect_video_codec,
@@ -262,16 +263,53 @@ def test_build_ffmpeg_command_uses_low_cpu_libx264_options(tmp_path):
     assert "-crf" in command
 
 
+def test_build_ffmpeg_command_window_uses_window_id(tmp_path):
+    from meetings_transcriber.config import Settings
+    from meetings_transcriber.profiles import run_paths_for_directory
+
+    settings = Settings(
+        tmp_path, None, None, None, "large-v3", 2, 4, "cpu", "int8", 0.7, 2.0,
+        "pyannote", 0.5, 0.363, 30, "sink", "microphone", record_video=True,
+    )
+    target = VideoTarget(
+        source="window",
+        display=":1",
+        width=1280,
+        height=720,
+        window_id=0x2A00007,
+        label="window:test",
+    )
+    command = build_ffmpeg_command(
+        settings,
+        run_paths_for_directory(tmp_path),
+        "sink",
+        "microphone",
+        video_target=target,
+        video_codec="libx264",
+    )
+
+    assert "-window_id" in command
+    assert str(0x2A00007) in command
+    assert ":1+0,0" not in command
+    video_input_indexes = [i for i, value in enumerate(command) if value == "-i"]
+    assert command[video_input_indexes[-1] + 1] == ":1"
+
+
 class FakePopen:
     def __init__(self, return_codes):
         self.return_codes = iter(return_codes)
         self.signals = []
         self.stdout = None
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
 
     def wait(self):
         value = next(self.return_codes)
         if isinstance(value, BaseException):
             raise value
+        self.returncode = value
         return value
 
     def send_signal(self, signal):
@@ -354,10 +392,17 @@ def test_record_meeting_video_validates_all_outputs(tmp_path, monkeypatch):
     validated_audio = []
     validated_video = []
     monkeypatch.setattr(
-        "meetings_transcriber.audio.resolve_video_capture",
-        lambda _settings: (
-            ":0",
-            Monitor("DP-0", True, True, 1920, 1080, 0, 0),
+        "meetings_transcriber.audio.resolve_monitor_video_target",
+        lambda *_args, **_kwargs: (
+            VideoTarget(
+                source="monitor",
+                display=":0",
+                width=1920,
+                height=1080,
+                offset_x=0,
+                offset_y=0,
+                label="monitor:DP-0",
+            ),
             "libx264",
         ),
     )

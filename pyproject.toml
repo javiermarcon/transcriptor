@@ -14,6 +14,8 @@ dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5", "mypy>=1.10", "pre-commit>=3.7
 
 [project.scripts]
 meetings-transcriber = "meetings_transcriber.cli:main"
+meetings-transcriptor-native-host = "meetings_transcriber.native_host:main"
+meetings-transcriptor-native-messaging = "meetings_transcriber.native_messaging_install:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

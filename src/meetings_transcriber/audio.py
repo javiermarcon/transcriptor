@@ -5,6 +5,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,22 @@ class Monitor:
     offset_y: int | None = None
 
 
+@dataclass(frozen=True)
+class VideoTarget:
+    """Destino de captura de video. `source` es `monitor` o `window`."""
+
+    source: str
+    display: str
+    width: int
+    height: int
+    offset_x: int = 0
+    offset_y: int = 0
+    window_id: int | None = None
+    label: str = ""
+
+
 _GEOMETRY_RE = re.compile(r"(?P<width>\d+)x(?P<height>\d+)\+(?P<x>\d+)\+(?P<y>\d+)")
+_ACCEPTED_FFMPEG_CODES = frozenset({0, 130, 255})
 
 
 def command_output(command: list[str], runner: Runner = subprocess.run) -> str:
@@ -148,6 +164,26 @@ def resolve_video_capture(
     return display, monitor, detect_video_codec(runner)
 
 
+def resolve_monitor_video_target(
+    settings: Settings,
+    runner: Runner = subprocess.run,
+    environ: dict[str, str] | os._Environ[str] = os.environ,
+) -> tuple[VideoTarget, str]:
+    display, monitor, codec = resolve_video_capture(settings, runner, environ)
+    assert monitor.width is not None and monitor.height is not None
+    assert monitor.offset_x is not None and monitor.offset_y is not None
+    target = VideoTarget(
+        source="monitor",
+        display=display,
+        width=monitor.width,
+        height=monitor.height,
+        offset_x=monitor.offset_x,
+        offset_y=monitor.offset_y,
+        label=f"monitor:{monitor.name}",
+    )
+    return target, codec
+
+
 def ffprobe_duration(audio: Path, runner: Runner = subprocess.run) -> float:
     result = runner(
         [
@@ -197,6 +233,44 @@ def validate_video(video: Path, runner: Runner = subprocess.run) -> float:
     return duration
 
 
+def _resolve_video_inputs(
+    *,
+    display: str | None,
+    monitor: Monitor | None,
+    video_target: VideoTarget | None,
+    video_codec: str | None,
+) -> tuple[VideoTarget, str]:
+    if video_target is not None:
+        if video_codec is None:
+            raise ValueError("Faltan datos de captura para construir la grabación de video")
+        if video_target.source == "window" and video_target.window_id is None:
+            raise ValueError("VideoTarget window requiere window_id")
+        if video_target.width <= 0 or video_target.height <= 0:
+            raise ValueError("Geometría de captura de video inválida")
+        return video_target, video_codec
+    if display is None or monitor is None or video_codec is None:
+        raise ValueError("Faltan datos de captura para construir la grabación de video")
+    if (
+        monitor.width is None
+        or monitor.height is None
+        or monitor.offset_x is None
+        or monitor.offset_y is None
+    ):
+        raise ValueError("Geometría de monitor inválida para la captura de video")
+    return (
+        VideoTarget(
+            source="monitor",
+            display=display,
+            width=monitor.width,
+            height=monitor.height,
+            offset_x=monitor.offset_x,
+            offset_y=monitor.offset_y,
+            label=f"monitor:{monitor.name}",
+        ),
+        video_codec,
+    )
+
+
 def build_ffmpeg_command(
     settings: Settings,
     paths: RunPaths,
@@ -206,6 +280,7 @@ def build_ffmpeg_command(
     display: str | None = None,
     monitor: Monitor | None = None,
     video_codec: str | None = None,
+    video_target: VideoTarget | None = None,
 ) -> list[str]:
     filters = (
         "[0:a]aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono,"
@@ -222,15 +297,29 @@ def build_ffmpeg_command(
         "-f", "pulse", "-thread_queue_size", "1024", "-i", f"{sink}.monitor",
         "-f", "pulse", "-thread_queue_size", "1024", "-i", microphone,
     ]
+    target: VideoTarget | None = None
+    codec: str | None = video_codec
     if settings.record_video:
-        if display is None or monitor is None or video_codec is None:
-            raise ValueError("Faltan datos de captura para construir la grabación de video")
+        target, codec = _resolve_video_inputs(
+            display=display,
+            monitor=monitor,
+            video_target=video_target,
+            video_codec=video_codec,
+        )
         command.extend([
             "-f", "x11grab", "-thread_queue_size", "1024",
             "-framerate", str(settings.video_fps),
-            "-video_size", f"{monitor.width}x{monitor.height}",
-            "-draw_mouse", "1", "-i", f"{display}+{monitor.offset_x},{monitor.offset_y}",
+            "-video_size", f"{target.width}x{target.height}",
+            "-draw_mouse", "1",
         ])
+        if target.source == "window":
+            assert target.window_id is not None
+            command.extend(["-window_id", str(target.window_id), "-i", target.display])
+        else:
+            command.extend([
+                "-i",
+                f"{target.display}+{target.offset_x},{target.offset_y}",
+            ])
         filters += ",asplit=2[mezcla_wav][mezcla_video]"
         mixed_label = "[mezcla_wav]"
     else:
@@ -244,10 +333,10 @@ def build_ffmpeg_command(
         "-map", mixed_label, "-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1", str(paths.mixed_audio),
     ])
     if settings.record_video:
-        if video_codec is None:
+        if codec is None:
             raise ValueError("Faltan datos de salida para construir la grabación de video")
-        video_options = ["-c:v", video_codec, "-pix_fmt", "yuv420p"]
-        if video_codec == "h264_nvenc":
+        video_options = ["-c:v", codec, "-pix_fmt", "yuv420p"]
+        if codec == "h264_nvenc":
             video_options.extend(["-preset", "p4", "-tune", "ll", "-cq", "28"])
         else:
             video_options.extend(["-preset", "ultrafast", "-crf", "28"])
@@ -258,38 +347,101 @@ def build_ffmpeg_command(
     return command
 
 
-def record_meeting(settings: Settings, paths: RunPaths) -> int:
-    sink, microphone = resolve_audio_devices(settings)
-    if settings.record_video:
-        display, monitor, codec = resolve_video_capture(settings)
-        print(f"Códec de video: {codec}")
-        command = build_ffmpeg_command(
-            settings,
-            paths,
-            sink,
-            microphone,
-            display=display,
-            monitor=monitor,
-            video_codec=codec,
-        )
-    else:
-        command = build_ffmpeg_command(settings, paths, sink, microphone)
-    process = subprocess.Popen(command)
-    try:
-        return_code = process.wait()
-    except KeyboardInterrupt:
-        process.send_signal(signal.SIGINT)
-        return_code = process.wait()
+class RecordingSession:
+    """Sesión de grabación reutilizable por CLI y Native Messaging."""
 
-    if return_code not in {0, 130, 255}:
-        if settings.record_video:
-            raise RuntimeError(
-                f"FFmpeg no pudo completar la captura de audio y video; terminó con código "
-                f"{return_code}"
+    def __init__(
+        self,
+        settings: Settings,
+        paths: RunPaths,
+        *,
+        video_target: VideoTarget | None = None,
+        video_codec: str | None = None,
+    ) -> None:
+        self.settings = settings
+        self.paths = paths
+        self.video_target = video_target
+        self.video_codec = video_codec
+        self._process: subprocess.Popen[bytes] | None = None
+        self._return_code: int | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    @property
+    def return_code(self) -> int | None:
+        return self._return_code
+
+    def start(self) -> None:
+        if self._process is not None:
+            raise RuntimeError("La sesión de grabación ya fue iniciada")
+        sink, microphone = resolve_audio_devices(self.settings)
+        if self.settings.record_video:
+            target = self.video_target
+            codec = self.video_codec
+            if target is None or codec is None:
+                target, codec = resolve_monitor_video_target(self.settings)
+                self.video_target = target
+                self.video_codec = codec
+            # stderr: stdout queda libre para Native Messaging / pipes.
+            print(f"Códec de video: {codec}", file=sys.stderr, flush=True)
+            print(
+                f"Captura de video: {target.source} ({target.label or target.source})",
+                file=sys.stderr,
+                flush=True,
             )
-        raise RuntimeError(f"FFmpeg terminó con código inesperado {return_code}")
-    for audio in (paths.system_audio, paths.microphone_audio, paths.mixed_audio):
-        validate_audio(audio)
-    if settings.record_video:
-        validate_video(paths.video)
-    return return_code
+            command = build_ffmpeg_command(
+                self.settings,
+                self.paths,
+                sink,
+                microphone,
+                video_target=target,
+                video_codec=codec,
+            )
+        else:
+            command = build_ffmpeg_command(self.settings, self.paths, sink, microphone)
+        self._process = subprocess.Popen(command)
+
+    def wait(self) -> int:
+        if self._process is None:
+            raise RuntimeError("La sesión de grabación no está iniciada")
+        try:
+            self._return_code = self._process.wait()
+        except KeyboardInterrupt:
+            self._return_code = self.stop()
+        return self._return_code
+
+    def stop(self) -> int:
+        if self._process is None:
+            raise RuntimeError("La sesión de grabación no está iniciada")
+        if self._process.poll() is None:
+            self._process.send_signal(signal.SIGINT)
+            self._return_code = self._process.wait()
+        elif self._return_code is None:
+            self._return_code = self._process.returncode
+        return self._return_code
+
+    def validate_outputs(self, return_code: int | None = None) -> int:
+        code = self._return_code if return_code is None else return_code
+        if code is None:
+            raise RuntimeError("No hay código de salida de FFmpeg para validar")
+        if code not in _ACCEPTED_FFMPEG_CODES:
+            if self.settings.record_video:
+                raise RuntimeError(
+                    "FFmpeg no pudo completar la captura de audio y video; terminó con código "
+                    f"{code}"
+                )
+            raise RuntimeError(f"FFmpeg terminó con código inesperado {code}")
+        for audio in (self.paths.system_audio, self.paths.microphone_audio, self.paths.mixed_audio):
+            validate_audio(audio)
+        if self.settings.record_video:
+            validate_video(self.paths.video)
+        return code
+
+
+def record_meeting(settings: Settings, paths: RunPaths) -> int:
+    session = RecordingSession(settings, paths)
+    session.start()
+    return_code = session.wait()
+    return session.validate_outputs(return_code)

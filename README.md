@@ -20,6 +20,7 @@ Aplicación local para grabar, transcribir y diarizar reuniones. La implementaci
 - `DEVICE=auto` elige CUDA o CPU según la máquina; plantilla `meetings-transcriptor.env.example`.
 - Knobs de WhisperX configurables (beam, VAD, umbrales) y filtro de alucinaciones en posprocesado.
 - Preparado para una futura interfaz Kivy.
+- Host Firefox Native Messaging (`com.meetings.transcriptor`) con captura por ventana X11 y fallback explícito a monitor.
 
 ## Estructura
 
@@ -29,6 +30,8 @@ transcriptor/
 ├── README.md
 ├── meetings-transcriptor.env.example
 ├── grabar_transcribir_diarizar.sh
+├── scripts/
+│   └── native-messaging.sh
 ├── src/
 │   └── meetings_transcriber/
 │       ├── __init__.py
@@ -36,18 +39,28 @@ transcriptor/
 │       ├── cli.py
 │       ├── config.py
 │       ├── models.py
+│       ├── native_controller.py
+│       ├── native_host.py
+│       ├── native_messaging_install.py
+│       ├── native_protocol.py
 │       ├── postprocess.py
 │       ├── profiles.py
 │       ├── progress.py
-│       └── transcription.py
+│       ├── transcription.py
+│       └── window_capture.py
 └── tests/
     ├── test_audio.py
     ├── test_cli.py
     ├── test_config.py
+    ├── test_native_controller.py
+    ├── test_native_host.py
+    ├── test_native_messaging_install.py
+    ├── test_native_protocol.py
     ├── test_postprocess.py
     ├── test_profiles.py
     ├── test_progress.py
-    └── test_transcription.py
+    ├── test_transcription.py
+    └── test_window_capture.py
 ```
 
 Las reuniones quedan fuera del repositorio:
@@ -339,6 +352,9 @@ Notas:
 | `RECORD_VIDEO` | Grabar el monitor y audio mezclado en MP4 | `true` |
 | `VIDEO_MONITOR` | Salida `primary` de xrandr o nombre explícito | `primary` |
 | `VIDEO_FPS` | Frames por segundo de la captura | `10` |
+| `NATIVE_MESSAGING_PROFILE` | Perfil usado por el host Firefox | obligatorio para la extensión |
+| `NATIVE_VIDEO_SOURCE` | `window` (default del host) o `monitor` (fallback explícito) | `window` |
+
 ## Perfiles
 
 Primera ejecución:
@@ -611,6 +627,79 @@ pip install -e '.[dev]'
 .venv/bin/pre-commit install
 .venv/bin/pre-commit run --all-files
 ```
+
+## Native Messaging (extensión Firefox)
+
+El host local `com.meetings.transcriptor` permite a la extensión
+[`transcriptor-firefox`](../transcriptor-firefox) consultar estado, iniciar y
+detener una grabación. **No** implementa la UI de Firefox aquí y **no** graba
+desde JavaScript.
+
+Protocolo v1 (mismas formas que la extensión):
+
+| Acción | Payload | Respuesta `data` (éxito) |
+|---|---|---|
+| `get_status` | `{}` | `{ "status": "ready"\|"recording"\|"error", "session_id"?: "..." }` |
+| `start_recording` | `{ "url", "title" }` | incluye `session_id`, `status`, `video_source`, `meeting_dir` |
+| `stop_recording` | `{ "session_id" }` | `{ "status": "ready", ... archivos ... }` |
+
+### Captura de video desde la extensión
+
+- Por defecto el host usa `NATIVE_VIDEO_SOURCE=window`: intenta resolver una
+  ventana **Firefox** visible en X11 cuyo título coincida con el de la pestaña
+  de Meet (`xwininfo`/`xprop` + `ffmpeg -f x11grab -window_id …`).
+- Si no hay ventana fiable (p. ej. Firefox nativo en Wayland sin ventanas X11),
+  el host **responde error** (`WINDOW_CAPTURE_UNAVAILABLE` / `WINDOW_NOT_FOUND`).
+  **No** cambia solo al monitor completo.
+- El fallback de monitor es **explícito**:
+  ```bash
+  export NATIVE_VIDEO_SOURCE=monitor
+  export VIDEO_MONITOR=primary   # o el nombre de xrandr
+  ```
+  En ese modo la respuesta incluye `"video_source": "monitor"` (no afirma que
+  sea solo la reunión).
+- La CLI (`./grabar_transcribir_diarizar.sh`) sigue grabando el monitor como
+  hasta ahora; no depende de Native Messaging.
+
+### Instalación del host (manual)
+
+No se registra solo. Tras `pip install -e .` (o con el `.venv` del proyecto):
+
+```bash
+# 1) Configurá perfil (y opcionalmente el modo de video) en el env del usuario
+#    ~/.config/meetings-transcriptor.env
+#    NATIVE_MESSAGING_PROFILE=shipii
+#    NATIVE_VIDEO_SOURCE=window   # o monitor
+
+# 2) Registrá el manifiesto para Firefox (acción explícita)
+./scripts/native-messaging.sh install
+# equivalente:
+#   .venv/bin/python -m meetings_transcriber.native_messaging_install install
+
+# 3) Verificá
+./scripts/native-messaging.sh verify
+```
+
+El instalador:
+
+- resuelve el Python del `.venv` del proyecto (o `NATIVE_HOST_PYTHON` / `sys.executable`);
+- escribe un wrapper ejecutable bajo `XDG_DATA_HOME/meetings-transcriptor/`
+  (por defecto `~/.local/share/meetings-transcriptor/`);
+- escribe `~/.mozilla/native-messaging-hosts/com.meetings.transcriptor.json`
+  con `allowed_extensions: ["meetings-transcriptor@example.org"]` exactamente.
+
+Desinstalación (no borra grabaciones ni el `.env`):
+
+```bash
+./scripts/native-messaging.sh uninstall
+```
+
+### Seguridad del host
+
+- Framing: 4 bytes LE + JSON UTF-8; tamaño máximo acotado.
+- Solo acciones allowlisted; sin shell arbitrario.
+- `stdout` es solo protocolo; logs a `stderr`.
+- Si Firefox cierra el pipe, el host envía `SIGINT` a FFmpeg y valida/cierra la sesión.
 
 ## Diseño para Kivy
 
