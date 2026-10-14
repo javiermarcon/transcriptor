@@ -10,6 +10,7 @@ from meetings_transcriber.audio import (
     command_output,
     detect_video_codec,
     ffprobe_duration,
+    nvenc_usable,
     parse_xrandr_output,
     record_meeting,
     resolve_audio_devices,
@@ -90,9 +91,39 @@ def test_resolve_video_capture_requires_display(tmp_path):
         resolve_video_capture(settings, environ={})
 
 
-def test_detect_video_codec_prefers_nvenc():
-    runner = Mock(return_value=completed(" V..... h264_nvenc NVIDIA NVENC H.264 encoder\n"))
+def test_nvenc_usable_requires_successful_probe():
+    ok = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
+    fail = Mock(return_value=Mock(returncode=187, stdout="", stderr="No capable devices"))
+    assert nvenc_usable(ok) is True
+    assert nvenc_usable(fail) is False
+
+
+def test_detect_video_codec_prefers_nvenc_when_probe_succeeds():
+    def runner(command, check=True, text=True, capture_output=True):
+        result = Mock()
+        if command == ["ffmpeg", "-hide_banner", "-encoders"]:
+            result.stdout = " V..... h264_nvenc NVIDIA NVENC H.264 encoder\n"
+            return result
+        result.returncode = 0
+        result.stdout = ""
+        result.stderr = ""
+        return result
+
     assert detect_video_codec(runner) == "h264_nvenc"
+
+
+def test_detect_video_codec_falls_back_when_nvenc_unusable():
+    def runner(command, check=True, text=True, capture_output=True):
+        result = Mock()
+        if command == ["ffmpeg", "-hide_banner", "-encoders"]:
+            result.stdout = " V..... h264_nvenc NVIDIA NVENC H.264 encoder\n"
+            return result
+        result.returncode = 187
+        result.stdout = ""
+        result.stderr = "OpenEncodeSessionEx failed"
+        return result
+
+    assert detect_video_codec(runner) == "libx264"
 
 
 def test_detect_video_codec_falls_back_to_libx264():

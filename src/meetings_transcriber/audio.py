@@ -96,12 +96,44 @@ def resolve_monitor(requested: str, monitors: list[Monitor]) -> Monitor:
     return monitor
 
 
+def nvenc_usable(runner: Runner = subprocess.run) -> bool:
+    """Comprueba si h264_nvenc abre de verdad, no solo si FFmpeg lo lista."""
+    try:
+        result = runner(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=64x64:d=0.1",
+                "-frames:v",
+                "1",
+                "-c:v",
+                "h264_nvenc",
+                "-f",
+                "null",
+                "-",
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
 def detect_video_codec(runner: Runner = subprocess.run) -> str:
     try:
         output = command_output(["ffmpeg", "-hide_banner", "-encoders"], runner)
     except (OSError, subprocess.CalledProcessError):
         return "libx264"
-    return "h264_nvenc" if re.search(r"\bh264_nvenc\b", output) else "libx264"
+    if not re.search(r"\bh264_nvenc\b", output):
+        return "libx264"
+    return "h264_nvenc" if nvenc_usable(runner) else "libx264"
 
 
 def resolve_video_capture(
@@ -230,6 +262,7 @@ def record_meeting(settings: Settings, paths: RunPaths) -> int:
     sink, microphone = resolve_audio_devices(settings)
     if settings.record_video:
         display, monitor, codec = resolve_video_capture(settings)
+        print(f"Códec de video: {codec}")
         command = build_ffmpeg_command(
             settings,
             paths,
