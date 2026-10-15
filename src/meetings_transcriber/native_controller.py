@@ -10,7 +10,14 @@ from .audio import RecordingSession, detect_video_codec, resolve_monitor_video_t
 from .config import Settings, load_settings
 from .models import RunPaths
 from .native_protocol import error_response, ok_response, validate_request
+from .portal_screencast import PortalScreenCastError
 from .profiles import create_run_paths, ensure_profile
+from .wayland_capture import (
+    ensure_gst_pipewire_available,
+    is_wayland_session,
+    open_portal_capture,
+    video_target_from_portal,
+)
 from .window_capture import (
     WindowCaptureError,
     is_meet_url,
@@ -87,7 +94,7 @@ class NativeHostController:
                     request_id,
                     self.stop_recording(session_id=payload["session_id"]),
                 )
-        except WindowCaptureError as exc:
+        except (WindowCaptureError, PortalScreenCastError) as exc:
             self._last_error = exc.message
             return error_response(request_id, exc.code, exc.message)
         except ValueError as exc:
@@ -161,21 +168,26 @@ class NativeHostController:
                 "RECORD_VIDEO=false; el host Native Messaging requiere captura de video."
             )
 
+        codec = detect_video_codec()
+        portal_handle = None
         if video_source == "window":
-            window = resolve_meet_window(url=url, title=title, environ=self.environ)
-            target = video_target_for_window(window, environ=self.environ)
+            target, portal_handle = self._resolve_window_target(url=url, title=title)
+        elif is_wayland_session(self.environ):
+            # Fallback explícito a monitor en Wayland: portal (selector de pantalla).
+            ensure_gst_pipewire_available()
+            portal_handle = open_portal_capture("monitor", environ=self.environ)
+            target = video_target_from_portal(portal_handle)
         else:
-            # Fallback explícito: el usuario debe setear NATIVE_VIDEO_SOURCE=monitor.
             target, _codec = resolve_monitor_video_target(
                 self.settings, environ=self.environ
             )
 
-        codec = detect_video_codec()
         session = RecordingSession(
             self.settings,
             paths,
             video_target=target,
             video_codec=codec,
+            portal_handle=portal_handle,
         )
         session_id = str(uuid.uuid4())
         try:
@@ -241,6 +253,24 @@ class NativeHostController:
                 "video": str(active.paths.video),
             },
         }
+
+    def _resolve_window_target(self, *, url: str, title: str):
+        """X11 por window_id si hay ventanas Firefox; si no, portal Wayland."""
+        if is_wayland_session(self.environ):
+            ensure_gst_pipewire_available()
+            handle = open_portal_capture("window", environ=self.environ)
+            return video_target_from_portal(handle), handle
+
+        try:
+            window = resolve_meet_window(url=url, title=title, environ=self.environ)
+            return video_target_for_window(window, environ=self.environ), None
+        except WindowCaptureError as exc:
+            # Sesión híbrida: Wayland_DISPLAY presente aunque XDG diga otra cosa.
+            if exc.code == "WINDOW_CAPTURE_UNAVAILABLE" and self.environ.get("WAYLAND_DISPLAY"):
+                ensure_gst_pipewire_available()
+                handle = open_portal_capture("window", environ=self.environ)
+                return video_target_from_portal(handle), handle
+            raise
 
     def shutdown(self) -> None:
         """Cierre seguro si Firefox corta el pipe (sin dejar FFmpeg huérfano)."""

@@ -105,6 +105,13 @@ sudo apt install ffmpeg pulseaudio-utils libnotify-bin
 
 La grabación de video en GNOME/X11 también requiere `xrandr` (paquete `x11-xserver-utils`).
 
+En **Wayland**, la captura de ventana/monitor usa el portal ScreenCast y GStreamer:
+
+```bash
+sudo apt install python3-gi gir1.2-glib-2.0 xdg-desktop-portal xdg-desktop-portal-gnome \
+    gstreamer1.0-tools gstreamer1.0-pipewire
+```
+
 ### PyTorch solo CPU (laptop sin GPU)
 
 Si vas a usar solo CPU, conviene reemplazar torch/torchaudio/torchvision por builds CPU-only. Para evitar conflictos ante futuras actualizaciones, obtené las versiones dinámicamente:
@@ -645,21 +652,24 @@ Protocolo v1 (mismas formas que la extensión):
 
 ### Captura de video desde la extensión
 
-- Por defecto el host usa `NATIVE_VIDEO_SOURCE=window`: intenta resolver una
-  ventana **Firefox** visible en X11 cuyo título coincida con el de la pestaña
-  de Meet (`xwininfo`/`xprop` + `ffmpeg -f x11grab -window_id …`).
-- Si no hay ventana fiable (p. ej. Firefox nativo en Wayland sin ventanas X11),
-  el host **responde error** (`WINDOW_CAPTURE_UNAVAILABLE` / `WINDOW_NOT_FOUND`).
+- Por defecto el host usa `NATIVE_VIDEO_SOURCE=window`.
+- **X11:** resuelve una ventana Firefox visible cuyo título coincida con la
+  pestaña de Meet (`xwininfo`/`xprop` + `ffmpeg -f x11grab -window_id …`).
+- **Wayland:** usa el portal `xdg-desktop-portal` ScreenCast (tipo ventana) +
+  GStreamer `pipewiresrc` → FFmpeg. Aparece el selector del sistema: elegí la
+  ventana de Meet. Requiere `python3-gi`, `xdg-desktop-portal` y
+  `gstreamer1.0-pipewire` (paquetes del sistema; el worker corre con
+  `/usr/bin/python3`).
+- Si la captura de ventana no es posible, el host **responde error** explícito.
   **No** cambia solo al monitor completo.
 - El fallback de monitor es **explícito**:
   ```bash
   export NATIVE_VIDEO_SOURCE=monitor
-  export VIDEO_MONITOR=primary   # o el nombre de xrandr
   ```
-  En ese modo la respuesta incluye `"video_source": "monitor"` (no afirma que
-  sea solo la reunión).
-- La CLI (`./grabar_transcribir_diarizar.sh`) sigue grabando el monitor como
-  hasta ahora; no depende de Native Messaging.
+  - En X11: monitor de `VIDEO_MONITOR` vía `x11grab`.
+  - En Wayland: portal ScreenCast (tipo monitor) + PipeWire/GStreamer.
+  La respuesta incluye `"video_source": "monitor"` (no afirma que sea solo Meet).
+- La CLI en Wayland también usa el portal para el monitor al grabar video.
 
 ### Instalación del host (manual)
 

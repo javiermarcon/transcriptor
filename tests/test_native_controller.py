@@ -329,6 +329,72 @@ def test_missing_profile_env(tmp_path):
     assert response["error"]["code"] == "PROFILE_NOT_CONFIGURED"
 
 
+def test_wayland_window_uses_portal_not_x11(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    environ = {
+        "NATIVE_MESSAGING_PROFILE": "Shipii",
+        "NATIVE_VIDEO_SOURCE": "window",
+        "XDG_SESSION_TYPE": "wayland",
+        "WAYLAND_DISPLAY": "wayland-0",
+        "DISPLAY": ":1",
+    }
+    ctrl = NativeHostController(settings=settings, project_dir=tmp_path, environ=environ)
+    fake = FakePopen()
+    monkeypatch.setattr(
+        "meetings_transcriber.audio.subprocess.Popen",
+        lambda *_a, **_k: fake,
+    )
+    monkeypatch.setattr("meetings_transcriber.audio.resolve_audio_devices", lambda _s: ("sink", "mic"))
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.detect_video_codec",
+        lambda *_a, **_k: "libx264",
+    )
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.ensure_gst_pipewire_available",
+        lambda: None,
+    )
+    handle = Mock()
+    handle.close = Mock()
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.open_portal_capture",
+        lambda kind, environ=None: handle if kind == "window" else (_ for _ in ()).throw(AssertionError(kind)),
+    )
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.video_target_from_portal",
+        lambda _handle: VideoTarget(
+            source="window",
+            display="",
+            width=1280,
+            height=720,
+            backend="portal",
+            pipewire_node_id=99,
+            label="portal:window:node=99",
+        ),
+    )
+    # Evitar que RecordingSession intente gst real: forzar backend x11 tras resolver.
+    # En su lugar mockeamos _start_portal_pipeline.
+    monkeypatch.setattr(
+        "meetings_transcriber.audio.RecordingSession._start_portal_pipeline",
+        lambda self, sink, microphone, target, codec: setattr(
+            self, "_process", fake
+        ),
+    )
+    monkeypatch.setattr("meetings_transcriber.audio.validate_audio", lambda *_a, **_k: 1.0)
+    monkeypatch.setattr("meetings_transcriber.audio.validate_video", lambda *_a, **_k: 1.0)
+
+    response = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "w1",
+            "action": "start_recording",
+            "payload": {"url": "https://meet.google.com/abc-defg-hij", "title": "Standup"},
+        }
+    )
+    assert response["ok"] is True
+    assert response["data"]["video_source"] == "window"
+    assert "portal" in response["data"]["video_label"]
+
+
 def test_ffmpeg_error_on_bad_return_code(controller, monkeypatch):
     ctrl, fake = controller
 

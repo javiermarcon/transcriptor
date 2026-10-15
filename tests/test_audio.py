@@ -295,6 +295,38 @@ def test_build_ffmpeg_command_window_uses_window_id(tmp_path):
     assert command[video_input_indexes[-1] + 1] == ":1"
 
 
+def test_build_ffmpeg_command_portal_uses_rawvideo(tmp_path):
+    from meetings_transcriber.config import Settings
+    from meetings_transcriber.profiles import run_paths_for_directory
+
+    settings = Settings(
+        tmp_path, None, None, None, "large-v3", 2, 4, "cpu", "int8", 0.7, 2.0,
+        "pyannote", 0.5, 0.363, 30, "sink", "microphone", record_video=True,
+    )
+    target = VideoTarget(
+        source="window",
+        display="",
+        width=1280,
+        height=720,
+        backend="portal",
+        pipewire_node_id=77,
+        label="portal:window",
+    )
+    command = build_ffmpeg_command(
+        settings,
+        run_paths_for_directory(tmp_path),
+        "sink",
+        "microphone",
+        video_target=target,
+        video_codec="libx264",
+        portal_video_path="/dev/fd/3",
+    )
+    assert "rawvideo" in command
+    assert "x11grab" not in command
+    assert "/dev/fd/3" in command
+    assert "yuv420p" in command
+
+
 class FakePopen:
     def __init__(self, return_codes):
         self.return_codes = iter(return_codes)
@@ -391,6 +423,10 @@ def test_record_meeting_video_validates_all_outputs(tmp_path, monkeypatch):
     fake_process = FakePopen([0])
     validated_audio = []
     validated_video = []
+    monkeypatch.setattr(
+        "meetings_transcriber.wayland_capture.is_wayland_session",
+        lambda _environ=None: False,
+    )
     monkeypatch.setattr(
         "meetings_transcriber.audio.resolve_monitor_video_target",
         lambda *_args, **_kwargs: (

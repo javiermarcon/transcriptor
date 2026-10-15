@@ -29,7 +29,11 @@ class Monitor:
 
 @dataclass(frozen=True)
 class VideoTarget:
-    """Destino de captura de video. `source` es `monitor` o `window`."""
+    """Destino de captura de video.
+
+    `source`: `monitor` o `window`.
+    `backend`: `x11` (x11grab) o `portal` (PipeWire vía xdg-desktop-portal).
+    """
 
     source: str
     display: str
@@ -39,6 +43,8 @@ class VideoTarget:
     offset_y: int = 0
     window_id: int | None = None
     label: str = ""
+    backend: str = "x11"
+    pipewire_node_id: int | None = None
 
 
 _GEOMETRY_RE = re.compile(r"(?P<width>\d+)x(?P<height>\d+)\+(?P<x>\d+)\+(?P<y>\d+)")
@@ -180,6 +186,7 @@ def resolve_monitor_video_target(
         offset_x=monitor.offset_x,
         offset_y=monitor.offset_y,
         label=f"monitor:{monitor.name}",
+        backend="x11",
     )
     return target, codec
 
@@ -243,7 +250,10 @@ def _resolve_video_inputs(
     if video_target is not None:
         if video_codec is None:
             raise ValueError("Faltan datos de captura para construir la grabación de video")
-        if video_target.source == "window" and video_target.window_id is None:
+        if video_target.backend == "portal":
+            if video_target.pipewire_node_id is None:
+                raise ValueError("VideoTarget portal requiere pipewire_node_id")
+        elif video_target.source == "window" and video_target.window_id is None:
             raise ValueError("VideoTarget window requiere window_id")
         if video_target.width <= 0 or video_target.height <= 0:
             raise ValueError("Geometría de captura de video inválida")
@@ -266,6 +276,7 @@ def _resolve_video_inputs(
             offset_x=monitor.offset_x,
             offset_y=monitor.offset_y,
             label=f"monitor:{monitor.name}",
+            backend="x11",
         ),
         video_codec,
     )
@@ -281,6 +292,7 @@ def build_ffmpeg_command(
     monitor: Monitor | None = None,
     video_codec: str | None = None,
     video_target: VideoTarget | None = None,
+    portal_video_path: str | None = None,
 ) -> list[str]:
     filters = (
         "[0:a]aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono,"
@@ -306,20 +318,32 @@ def build_ffmpeg_command(
             video_target=video_target,
             video_codec=video_codec,
         )
-        command.extend([
-            "-f", "x11grab", "-thread_queue_size", "1024",
-            "-framerate", str(settings.video_fps),
-            "-video_size", f"{target.width}x{target.height}",
-            "-draw_mouse", "1",
-        ])
-        if target.source == "window":
-            assert target.window_id is not None
-            command.extend(["-window_id", str(target.window_id), "-i", target.display])
+        if target.backend == "portal":
+            if not portal_video_path:
+                raise ValueError("Captura portal requiere portal_video_path (fifo/fd)")
+            command.extend([
+                "-f", "rawvideo",
+                "-pixel_format", "yuv420p",
+                "-video_size", f"{target.width}x{target.height}",
+                "-framerate", str(settings.video_fps),
+                "-thread_queue_size", "1024",
+                "-i", portal_video_path,
+            ])
         else:
             command.extend([
-                "-i",
-                f"{target.display}+{target.offset_x},{target.offset_y}",
+                "-f", "x11grab", "-thread_queue_size", "1024",
+                "-framerate", str(settings.video_fps),
+                "-video_size", f"{target.width}x{target.height}",
+                "-draw_mouse", "1",
             ])
+            if target.source == "window":
+                assert target.window_id is not None
+                command.extend(["-window_id", str(target.window_id), "-i", target.display])
+            else:
+                command.extend([
+                    "-i",
+                    f"{target.display}+{target.offset_x},{target.offset_y}",
+                ])
         filters += ",asplit=2[mezcla_wav][mezcla_video]"
         mixed_label = "[mezcla_wav]"
     else:
@@ -357,13 +381,17 @@ class RecordingSession:
         *,
         video_target: VideoTarget | None = None,
         video_codec: str | None = None,
+        portal_handle: object | None = None,
     ) -> None:
         self.settings = settings
         self.paths = paths
         self.video_target = video_target
         self.video_codec = video_codec
+        self._portal_handle = portal_handle
         self._process: subprocess.Popen[bytes] | None = None
+        self._gst_process: subprocess.Popen[bytes] | None = None
         self._return_code: int | None = None
+        self._portal_read_fd: int | None = None
 
     @property
     def is_running(self) -> bool:
@@ -381,16 +409,20 @@ class RecordingSession:
             target = self.video_target
             codec = self.video_codec
             if target is None or codec is None:
-                target, codec = resolve_monitor_video_target(self.settings)
+                target, codec = self._default_video_target()
                 self.video_target = target
                 self.video_codec = codec
             # stderr: stdout queda libre para Native Messaging / pipes.
             print(f"Códec de video: {codec}", file=sys.stderr, flush=True)
             print(
-                f"Captura de video: {target.source} ({target.label or target.source})",
+                f"Captura de video: {target.backend}/{target.source} "
+                f"({target.label or target.source})",
                 file=sys.stderr,
                 flush=True,
             )
+            if target.backend == "portal":
+                self._start_portal_pipeline(sink, microphone, target, codec)
+                return
             command = build_ffmpeg_command(
                 self.settings,
                 self.paths,
@@ -403,6 +435,65 @@ class RecordingSession:
             command = build_ffmpeg_command(self.settings, self.paths, sink, microphone)
         self._process = subprocess.Popen(command)
 
+    def _default_video_target(self) -> tuple[VideoTarget, str]:
+        from .wayland_capture import (
+            ensure_gst_pipewire_available,
+            is_wayland_session,
+            open_portal_capture,
+            video_target_from_portal,
+        )
+
+        if is_wayland_session():
+            print(
+                "Wayland detectado: se abrirá el selector del portal para el monitor.",
+                file=sys.stderr,
+                flush=True,
+            )
+            ensure_gst_pipewire_available()
+            handle = open_portal_capture("monitor")
+            self._portal_handle = handle
+            return video_target_from_portal(handle), detect_video_codec()
+        return resolve_monitor_video_target(self.settings)
+
+    def _start_portal_pipeline(
+        self,
+        sink: str,
+        microphone: str,
+        target: VideoTarget,
+        codec: str,
+    ) -> None:
+        from .wayland_capture import build_pipewire_gst_command, ensure_gst_pipewire_available
+
+        ensure_gst_pipewire_available()
+        assert target.pipewire_node_id is not None
+        read_fd, write_fd = os.pipe()
+        self._portal_read_fd = read_fd
+        gst_cmd = build_pipewire_gst_command(
+            node_id=target.pipewire_node_id,
+            width=target.width,
+            height=target.height,
+            fps=self.settings.video_fps,
+        )
+        self._gst_process = subprocess.Popen(
+            gst_cmd,
+            stdout=write_fd,
+            stderr=subprocess.DEVNULL,
+        )
+        os.close(write_fd)
+        portal_path = f"/dev/fd/{read_fd}"
+        command = build_ffmpeg_command(
+            self.settings,
+            self.paths,
+            sink,
+            microphone,
+            video_target=target,
+            video_codec=codec,
+            portal_video_path=portal_path,
+        )
+        self._process = subprocess.Popen(command, pass_fds=(read_fd,))
+        os.close(read_fd)
+        self._portal_read_fd = None
+
     def wait(self) -> int:
         if self._process is None:
             raise RuntimeError("La sesión de grabación no está iniciada")
@@ -410,6 +501,8 @@ class RecordingSession:
             self._return_code = self._process.wait()
         except KeyboardInterrupt:
             self._return_code = self.stop()
+        finally:
+            self._cleanup_helpers()
         return self._return_code
 
     def stop(self) -> int:
@@ -420,7 +513,30 @@ class RecordingSession:
             self._return_code = self._process.wait()
         elif self._return_code is None:
             self._return_code = self._process.returncode
+        self._cleanup_helpers()
         return self._return_code
+
+    def _cleanup_helpers(self) -> None:
+        if self._gst_process is not None and self._gst_process.poll() is None:
+            self._gst_process.send_signal(signal.SIGINT)
+            try:
+                self._gst_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._gst_process.kill()
+                self._gst_process.wait(timeout=5)
+        self._gst_process = None
+        handle = self._portal_handle
+        self._portal_handle = None
+        if handle is not None:
+            close = getattr(handle, "close", None)
+            if callable(close):
+                close()
+        if self._portal_read_fd is not None:
+            try:
+                os.close(self._portal_read_fd)
+            except OSError:
+                pass
+            self._portal_read_fd = None
 
     def validate_outputs(self, return_code: int | None = None) -> int:
         code = self._return_code if return_code is None else return_code
