@@ -88,14 +88,26 @@ textos_reuniones/
 
 ```bash
 cd ~/proyectos/meetings/transcriptor
+# Recomendado: Python 3.12 o 3.13 (WhisperX 3.8.x no declara soporte 3.14)
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install whisper-ctranslate2 whisperx
+pip install 'whisperx>=3.8.6' || pip install --no-deps 'whisperx>=3.8.6'
+python -m pip install -r requirements.txt
 python -m pip install -e '.[dev]'
 ```
 
-`pip install whisperx` suele traer PyTorch con CUDA. Eso es lo adecuado para una NVIDIA (p. ej. RTX 3090). Si en algún momento forzaste la build **CPU-only** (como describe la sección siguiente), podés volver a CUDA con el procedimiento de más abajo.
+`whisperx` va aparte porque su metadata exige `torch~=2.8.0` y el
+resolver de pip falla si ya tenés un torch CUDA más nuevo (p. ej.
+`2.11+cu128`) o Python 3.14; en ese caso `--no-deps` + `requirements.txt`
+completan el resto. El archivo fija además `transformers` y
+`huggingface-hub<1` (pip a veces los omite o sube el hub a >=1 y rompe
+la alineación Wav2Vec2).
+
+PyTorch suele venir con CUDA vía WhisperX; eso es lo adecuado para una
+NVIDIA (p. ej. RTX 3090). Si en algún momento forzaste la build
+**CPU-only** (como describe la sección siguiente), podés volver a CUDA
+con el procedimiento de más abajo.
 
 Dependencias del sistema:
 

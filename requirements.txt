@@ -1,0 +1,33 @@
+# Dependencias runtime (transcripción / diarización).
+#
+# Instalación (ver también README):
+#   1) pip install 'whisperx>=3.8.6'
+#      Si falla por torch~=2.8 / Python >=3.14 / CUDA más nuevo:
+#        pip install --no-deps 'whisperx>=3.8.6'
+#   2) pip install -r requirements.txt
+#   3) pip install -e '.[dev]'   # opcional (tests/lint)
+#
+# Python recomendado: 3.12 o 3.13 (WhisperX 3.8.x declara <3.14).
+#
+# No van acá:
+#   - WhisperX en sí: va en el paso 1 (su metadata exige torch~=2.8.0
+#     y rompe el resolver si ya tenés p.ej. torch 2.11+cu128)
+#   - PyGObject (`import gi`) → apt: python3-gi
+#   - torch CUDA custom → índice PyTorch del README
+#
+# Cotas transformers / huggingface-hub: WhisperX las declara, pero pip
+# a veces las omite o sube huggingface-hub a >=1 (rompe la alineación).
+
+whisper-ctranslate2>=0.5.8
+
+transformers>=4.48.0,<5
+huggingface-hub>=0.34.0,<1.0.0
+
+# Deps directas de WhisperX (por si el paso 1 usó --no-deps)
+ctranslate2>=4.5.0
+faster-whisper>=1.2.0
+nltk>=3.9.1
+numpy>=2.1.0
+omegaconf>=2.3.0
+pandas>=2.2.3
+pyannote-audio>=4.0.0
