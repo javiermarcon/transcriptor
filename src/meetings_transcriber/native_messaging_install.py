@@ -20,18 +20,22 @@ def project_root() -> Path:
 def resolve_python(project: Path) -> Path:
     env_override = os.environ.get("NATIVE_HOST_PYTHON", "").strip()
     if env_override:
-        candidate = Path(env_override).expanduser().resolve()
+        candidate = Path(env_override).expanduser()
+        # absolute() no sigue symlinks: hay que conservar .venv/bin/python.
+        candidate = candidate.absolute()
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
         raise FileNotFoundError(
             f"NATIVE_HOST_PYTHON no es un ejecutable válido: {candidate}"
         )
 
-    venv_python = project / ".venv" / "bin" / "python"
+    venv_python = (project / ".venv" / "bin" / "python").absolute()
     if venv_python.is_file() and os.access(venv_python, os.X_OK):
-        return venv_python.resolve()
+        # No usar resolve(): en venvs el binario es symlink a /usr/bin/pythonX
+        # y resolve() saltaría el site-packages del entorno virtual.
+        return venv_python
 
-    current = Path(sys.executable).resolve()
+    current = Path(sys.executable).absolute()
     if current.is_file() and os.access(current, os.X_OK):
         return current
     raise FileNotFoundError(
@@ -61,9 +65,11 @@ def manifest_path(manifest_dir: Path) -> Path:
 
 def write_wrapper(path: Path, python: Path, project: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    venv_dir = project / ".venv"
     content = (
         "#!/bin/sh\n"
         "set -eu\n"
+        f'export VIRTUAL_ENV="{venv_dir}"\n'
         f'export PYTHONPATH="{project / "src"}:${{PYTHONPATH:-}}"\n'
         f'exec "{python}" -m meetings_transcriber.native_host "$@"\n'
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,18 @@ from .profiles import read_hotwords, read_initial_prompt
 from .progress import Progress, parse_progress
 
 OnProgress = Callable[[Progress], None]
+
+_HF_TOKEN_RE = re.compile(r"hf_[A-Za-z0-9]+")
+
+
+def redact_secrets(text: str) -> str:
+    """Oculta tokens HF y flags --hf_token en mensajes de error."""
+    redacted = _HF_TOKEN_RE.sub("hf_***", text)
+    return re.sub(
+        r"(--hf_token)(\s+)(\S+)",
+        r"\1\2***",
+        redacted,
+    )
 
 
 def build_whisperx_command(settings: Settings, profile: ProfilePaths, paths: RunPaths) -> list[str]:
@@ -84,7 +97,9 @@ def run_streaming(
     )
     assert process.stdout is not None
     last_progress = ""
+    collected: list[str] = []
     for line in process.stdout:
+        collected.append(line)
         if echo_stdout:
             print(line, end="")
         progress = parse_progress(line, total_seconds)
@@ -101,7 +116,9 @@ def run_streaming(
                 last_progress = rendered
     return_code = process.wait()
     if return_code != 0:
-        raise subprocess.CalledProcessError(return_code, command)
+        tail = "".join(collected[-40:]).strip() or "(sin salida de WhisperX)"
+        detail = redact_secrets(tail)
+        raise RuntimeError(f"WhisperX falló (código {return_code}).\n{detail}")
 
 
 def find_generated_json(paths: RunPaths) -> Path:

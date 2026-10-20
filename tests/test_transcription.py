@@ -322,23 +322,30 @@ def test_run_streaming_callback_without_stdout(monkeypatch, capsys):
 
 
 def test_run_streaming_raises_on_nonzero_exit(monkeypatch):
-    import subprocess
-
     import pytest
 
     from meetings_transcriber.transcription import run_streaming
 
     class FakePopen:
         def __init__(self, *args, **kwargs):
-            self.stdout = ["test\n"]
+            self.stdout = ["ModuleNotFoundError: No module named 'whisperx'\n"]
 
         def wait(self):
             return 1
 
     monkeypatch.setattr("meetings_transcriber.transcription.subprocess.Popen", FakePopen)
 
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match=r"WhisperX falló \(código 1\)"):
         run_streaming(["echo"], 10.0)
+
+
+def test_redact_secrets_hides_hf_token():
+    from meetings_transcriber.transcription import redact_secrets
+
+    raw = "cmd --hf_token hf_SECRETtokenEXAMPLE1234567890ABCD boom"
+    out = redact_secrets(raw)
+    assert "hf_SECRET" not in out
+    assert "--hf_token ***" in out or "hf_***" in out
 
 
 def test_find_generated_json_returns_existing_result(tmp_path):
