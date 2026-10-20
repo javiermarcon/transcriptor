@@ -88,7 +88,9 @@ def open_portal_capture(
         [python, "-m", "meetings_transcriber.portal_screencast", kind],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # DEVNULL: si stderr es PIPE y nadie lo lee, el worker se bloquea
+        # al llenar el buffer y el host NM deja de responder.
+        stderr=subprocess.DEVNULL,
         text=True,
         env=env,
     )
@@ -96,13 +98,10 @@ def open_portal_capture(
     try:
         line = process.stdout.readline()
         if not line.strip():
-            stderr = ""
-            if process.stderr is not None:
-                stderr = process.stderr.read().strip()
             process.wait(timeout=5)
             raise PortalScreenCastError(
                 "WINDOW_CAPTURE_UNAVAILABLE",
-                stderr or "El worker del portal ScreenCast no devolvió datos.",
+                "El worker del portal ScreenCast no devolvió datos.",
             )
         payload = json.loads(line)
     except json.JSONDecodeError as exc:

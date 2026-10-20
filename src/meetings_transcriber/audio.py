@@ -510,7 +510,19 @@ class RecordingSession:
             raise RuntimeError("La sesión de grabación no está iniciada")
         if self._process.poll() is None:
             self._process.send_signal(signal.SIGINT)
-            self._return_code = self._process.wait()
+            try:
+                # Timeout obligatorio: un wait infinito bloquea el host NM
+                # (Firefox puede cortar el pipe del event page mientras graba).
+                self._return_code = self._process.wait(timeout=15)
+            except TypeError:
+                # Doubles de test / Popen sin kwarg timeout.
+                self._return_code = self._process.wait()
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                try:
+                    self._return_code = self._process.wait(timeout=5)
+                except TypeError:
+                    self._return_code = self._process.wait()
         elif self._return_code is None:
             self._return_code = self._process.returncode
         self._cleanup_helpers()

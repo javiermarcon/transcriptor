@@ -55,7 +55,7 @@ def _existing_executable(value: str | None) -> Path | None:
 
 def detect_cuda_available() -> bool:
     try:
-        import torch
+        import torch  # type: ignore[import-not-found]
     except ImportError:
         return False
     try:

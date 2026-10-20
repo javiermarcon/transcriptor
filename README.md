@@ -647,8 +647,13 @@ Protocolo v1 (mismas formas que la extensión):
 | Acción | Payload | Respuesta `data` (éxito) |
 |---|---|---|
 | `get_status` | `{}` | `{ "status": "ready"\|"recording"\|"error", "session_id"?: "..." }` |
-| `start_recording` | `{ "url", "title" }` | incluye `session_id`, `status`, `video_source`, `meeting_dir` |
+| `list_profiles` | `{}` | `{ "profiles": ["Shipii", …], "default_profile"?: "Shipii" }` |
+| `start_recording` | `{ "url", "title", "profile"? }` | incluye `session_id`, `status`, `profile`, `video_source`, `meeting_dir` |
 | `stop_recording` | `{ "session_id" }` | `{ "status": "ready", ... archivos ... }` |
+
+El perfil se elige desde la extensión con `list_profiles` + `profile` en
+`start_recording`. Si la extensión no envía `profile`, se usa
+`NATIVE_MESSAGING_PROFILE` como fallback.
 
 ### Captura de video desde la extensión
 
@@ -676,10 +681,9 @@ Protocolo v1 (mismas formas que la extensión):
 No se registra solo. Tras `pip install -e .` (o con el `.venv` del proyecto):
 
 ```bash
-# 1) Configurá perfil (y opcionalmente el modo de video) en el env del usuario
-#    ~/.config/meetings-transcriptor.env
-#    NATIVE_MESSAGING_PROFILE=shipii
-#    NATIVE_VIDEO_SOURCE=window   # o monitor
+# 1) Opcional: perfil default y modo de video en ~/.config/meetings-transcriptor.env
+#    NATIVE_MESSAGING_PROFILE=shipii   # fallback si la extensión no envía profile
+#    NATIVE_VIDEO_SOURCE=window       # o monitor
 
 # 2) Registrá el manifiesto para Firefox (acción explícita)
 ./scripts/native-messaging.sh install

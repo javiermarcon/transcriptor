@@ -6,7 +6,7 @@ PROTOCOL_VERSION = 1
 NATIVE_HOST_NAME = "com.meetings.transcriptor"
 ALLOWED_EXTENSION_ID = "meetings-transcriptor@example.org"
 
-ACTIONS = frozenset({"get_status", "start_recording", "stop_recording"})
+ACTIONS = frozenset({"get_status", "list_profiles", "start_recording", "stop_recording"})
 
 # Límite de Native Messaging en Firefox (~1 MiB). Usamos un tope conservador.
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -99,7 +99,15 @@ def validate_request(
                 "INVALID_REQUEST",
                 "start_recording requiere payload.title string.",
             )
-        extra = set(payload) - {"url", "title"}
+        if "profile" in payload:
+            profile = payload.get("profile")
+            if not isinstance(profile, str) or not profile.strip():
+                return None, error_response(
+                    request_id,
+                    "INVALID_REQUEST",
+                    "start_recording.payload.profile debe ser un string no vacío.",
+                )
+        extra = set(payload) - {"url", "title", "profile"}
         if extra:
             return None, error_response(
                 request_id,
@@ -121,12 +129,12 @@ def validate_request(
                 "INVALID_REQUEST",
                 f"Campos no permitidos en payload: {', '.join(sorted(extra))}",
             )
-    elif action == "get_status":
+    elif action in {"get_status", "list_profiles"}:
         if payload:
             return None, error_response(
                 request_id,
                 "INVALID_REQUEST",
-                "get_status no acepta campos en payload.",
+                f"{action} no acepta campos en payload.",
             )
 
     return {

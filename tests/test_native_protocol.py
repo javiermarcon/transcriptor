@@ -69,6 +69,22 @@ def test_validate_start_and_stop_payloads():
     )
     assert error is None
 
+    request, error = validate_request(
+        {
+            "protocol_version": 1,
+            "request_id": "a",
+            "action": "start_recording",
+            "payload": {
+                "url": "https://meet.google.com/x",
+                "title": "Standup",
+                "profile": "Shipii",
+            },
+        }
+    )
+    assert error is None
+    assert request is not None
+    assert request["payload"]["profile"] == "Shipii"
+
     _, error = validate_request(
         {
             "protocol_version": 1,
@@ -79,6 +95,16 @@ def test_validate_start_and_stop_payloads():
     )
     assert error is not None
     assert error["error"]["code"] == "INVALID_REQUEST"
+
+    _, error = validate_request(
+        {
+            "protocol_version": 1,
+            "request_id": "a",
+            "action": "list_profiles",
+            "payload": {},
+        }
+    )
+    assert error is None
 
     _, error = validate_request(
         {

@@ -11,7 +11,7 @@ from .config import Settings, load_settings
 from .models import RunPaths
 from .native_protocol import error_response, ok_response, validate_request
 from .portal_screencast import PortalScreenCastError
-from .profiles import create_run_paths, ensure_profile
+from .profiles import create_run_paths, ensure_profile, list_profile_names, validate_profile_name
 from .wayland_capture import (
     ensure_gst_pipewire_available,
     is_wayland_session,
@@ -64,14 +64,29 @@ class NativeHostController:
             f"NATIVE_VIDEO_SOURCE inválido: {raw!r}. Usá 'window' o 'monitor'."
         )
 
-    def native_profile_name(self) -> str:
+    def default_profile_name(self) -> str | None:
         raw = self.environ.get("NATIVE_MESSAGING_PROFILE", "").strip()
         if not raw:
-            raise ValueError(
-                "NATIVE_MESSAGING_PROFILE no está configurado. "
-                "Definilo en el entorno o en ~/.config/meetings-transcriptor.env."
-            )
-        return raw
+            return None
+        try:
+            return validate_profile_name(raw)
+        except ValueError:
+            return None
+
+    def resolve_profile_name(self, requested: str | None) -> str:
+        """Perfil del payload o fallback a NATIVE_MESSAGING_PROFILE."""
+        if requested is not None and str(requested).strip():
+            try:
+                return validate_profile_name(str(requested).strip())
+            except ValueError as exc:
+                raise ValueError(f"INVALID_PROFILE: {exc}") from exc
+        default = self.default_profile_name()
+        if default:
+            return default
+        raise ValueError(
+            "PROFILE_NOT_CONFIGURED: indicá un profile en start_recording "
+            "o configurá NATIVE_MESSAGING_PROFILE."
+        )
 
     def handle(self, message: Any) -> dict[str, Any]:
         request, error = validate_request(message)
@@ -84,10 +99,16 @@ class NativeHostController:
         try:
             if action == "get_status":
                 return ok_response(request_id, self.get_status())
+            if action == "list_profiles":
+                return ok_response(request_id, self.list_profiles())
             if action == "start_recording":
                 return ok_response(
                     request_id,
-                    self.start_recording(url=payload["url"], title=payload["title"]),
+                    self.start_recording(
+                        url=payload["url"],
+                        title=payload["title"],
+                        profile=payload.get("profile"),
+                    ),
                 )
             if action == "stop_recording":
                 return ok_response(
@@ -99,10 +120,16 @@ class NativeHostController:
             return error_response(request_id, exc.code, exc.message)
         except ValueError as exc:
             self._last_error = str(exc)
-            code = "PROFILE_NOT_CONFIGURED" if "NATIVE_MESSAGING_PROFILE" in str(exc) else "INVALID_REQUEST"
-            if "NATIVE_VIDEO_SOURCE" in str(exc):
+            message_text = str(exc)
+            if "PROFILE_NOT_CONFIGURED" in message_text or "NATIVE_MESSAGING_PROFILE" in message_text:
+                code = "PROFILE_NOT_CONFIGURED"
+            elif "INVALID_PROFILE" in message_text or "perfil inválido" in message_text.casefold():
+                code = "INVALID_PROFILE"
+            elif "NATIVE_VIDEO_SOURCE" in message_text:
                 code = "INVALID_REQUEST"
-            return error_response(request_id, code, str(exc))
+            else:
+                code = "INVALID_REQUEST"
+            return error_response(request_id, code, message_text)
         except RuntimeError as exc:
             self._last_error = str(exc)
             message = str(exc)
@@ -146,7 +173,21 @@ class NativeHostController:
             }
         return {"status": "ready", "session_id": None}
 
-    def start_recording(self, *, url: str, title: str) -> dict[str, Any]:
+    def list_profiles(self) -> dict[str, Any]:
+        profiles = list_profile_names(self.settings.base_dir)
+        default = self.default_profile_name()
+        data: dict[str, Any] = {"profiles": profiles}
+        if default is not None:
+            data["default_profile"] = default
+        return data
+
+    def start_recording(
+        self,
+        *,
+        url: str,
+        title: str,
+        profile: str | None = None,
+    ) -> dict[str, Any]:
         if self._active is not None and self._active.session.is_running:
             raise RuntimeError("BUSY: ya hay una grabación en curso")
         if self._active is not None:
@@ -158,10 +199,10 @@ class NativeHostController:
                 "La URL no corresponde a una pestaña https://meet.google.com/…",
             )
 
-        profile_name = self.native_profile_name()
+        profile_name = self.resolve_profile_name(profile)
         video_source = self.native_video_source()
-        profile = ensure_profile(self.settings.base_dir, profile_name)
-        paths = create_run_paths(profile)
+        profile_paths = ensure_profile(self.settings.base_dir, profile_name)
+        paths = create_run_paths(profile_paths)
 
         if not self.settings.record_video:
             raise RuntimeError(
@@ -206,7 +247,7 @@ class NativeHostController:
             session_id=session_id,
             session=session,
             paths=paths,
-            profile_name=profile.name,
+            profile_name=profile_paths.name,
             meet_url=url,
             meet_title=title,
             video_source=target.source,
@@ -217,7 +258,7 @@ class NativeHostController:
             "session_id": session_id,
             "status": "recording",
             "meeting_dir": str(paths.directory),
-            "profile": profile.name,
+            "profile": profile_paths.name,
             "video_source": target.source,
             "video_label": target.label,
             "meet_url": url,

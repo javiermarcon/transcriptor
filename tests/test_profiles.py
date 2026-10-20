@@ -7,6 +7,7 @@ from meetings_transcriber.profiles import (
     create_run_paths,
     ensure_profile,
     list_meetings,
+    list_profile_names,
     load_existing_run_paths,
     meeting_has_transcription,
     read_hotwords,
@@ -27,6 +28,15 @@ def test_ensure_profile_creates_context_files(tmp_path):
     assert profile.initial_prompt.exists()
     assert profile.hotwords.exists()
     assert "rioplatense" in read_initial_prompt(profile.initial_prompt)
+
+
+def test_list_profile_names_only_valid_dirs(tmp_path):
+    (tmp_path / "Shipii").mkdir()
+    (tmp_path / "motonave").mkdir()
+    (tmp_path / "not valid").mkdir()
+    (tmp_path / "readme.txt").write_text("x", encoding="utf-8")
+    assert list_profile_names(tmp_path) == ["motonave", "Shipii"]
+    assert list_profile_names(tmp_path / "missing") == []
 
 
 def test_read_hotwords_ignores_comments_and_duplicates(tmp_path):

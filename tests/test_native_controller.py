@@ -94,6 +94,55 @@ def test_get_status_ready(controller):
     assert response["request_id"] == "r1"
 
 
+def test_list_profiles_returns_dirs_and_default(controller, tmp_path):
+    ctrl, _fake = controller
+    (tmp_path / "Shipii").mkdir()
+    (tmp_path / "motonave").mkdir()
+    (tmp_path / "ignore.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "../bad").mkdir(exist_ok=True)
+
+    response = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "lp",
+            "action": "list_profiles",
+            "payload": {},
+        }
+    )
+    assert response["ok"] is True
+    assert response["data"]["profiles"] == ["motonave", "Shipii"]
+    assert response["data"]["default_profile"] == "Shipii"
+
+
+def test_start_recording_uses_profile_from_payload(controller, monkeypatch):
+    ctrl, _fake = controller
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.resolve_meet_window",
+        lambda **_k: X11Window(1, "Meet", 800, 600, 0, 0, "firefox"),
+    )
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.video_target_for_window",
+        lambda _w, environ=None: VideoTarget(
+            "window", ":1", 800, 600, window_id=1, label="w"
+        ),
+    )
+    response = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "p1",
+            "action": "start_recording",
+            "payload": {
+                "url": "https://meet.google.com/abc-defg-hij",
+                "title": "Meet",
+                "profile": "motonave",
+            },
+        }
+    )
+    assert response["ok"] is True
+    assert response["data"]["profile"] == "motonave"
+    assert "motonave" in response["data"]["meeting_dir"]
+
+
 def test_start_recording_window_success(controller, monkeypatch):
     ctrl, fake = controller
     window = X11Window(0xABC, "Standup - Google Meet", 1280, 720, 0, 0, "Navigator, firefox")
@@ -327,6 +376,51 @@ def test_missing_profile_env(tmp_path):
     )
     assert response["ok"] is False
     assert response["error"]["code"] == "PROFILE_NOT_CONFIGURED"
+
+
+def test_start_without_env_ok_when_profile_in_payload(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    ctrl = NativeHostController(
+        settings=settings,
+        project_dir=tmp_path,
+        environ={"NATIVE_VIDEO_SOURCE": "window", "DISPLAY": ":1"},
+    )
+    fake = FakePopen()
+    monkeypatch.setattr(
+        "meetings_transcriber.audio.subprocess.Popen",
+        lambda *_a, **_k: fake,
+    )
+    monkeypatch.setattr("meetings_transcriber.audio.resolve_audio_devices", lambda _s: ("sink", "mic"))
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.detect_video_codec",
+        lambda *_a, **_k: "libx264",
+    )
+    monkeypatch.setattr("meetings_transcriber.audio.validate_audio", lambda *_a, **_k: 1.0)
+    monkeypatch.setattr("meetings_transcriber.audio.validate_video", lambda *_a, **_k: 1.0)
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.resolve_meet_window",
+        lambda **_k: X11Window(1, "Meet", 800, 600, 0, 0, "firefox"),
+    )
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.video_target_for_window",
+        lambda _w, environ=None: VideoTarget(
+            "window", ":1", 800, 600, window_id=1, label="w"
+        ),
+    )
+    response = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "a",
+            "action": "start_recording",
+            "payload": {
+                "url": "https://meet.google.com/x",
+                "title": "Meet",
+                "profile": "Shipii",
+            },
+        }
+    )
+    assert response["ok"] is True
+    assert response["data"]["profile"] == "Shipii"
 
 
 def test_wayland_window_uses_portal_not_x11(tmp_path, monkeypatch):

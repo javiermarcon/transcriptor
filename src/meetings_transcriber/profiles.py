@@ -34,6 +34,20 @@ def ensure_profile(base_dir: Path, name: str) -> ProfilePaths:
     return ProfilePaths(name, directory, initial_prompt, hotwords)
 
 
+def list_profile_names(base_dir: Path) -> list[str]:
+    """Lista carpetas de perfil existentes bajo BASE_DIR (sin crear ninguna)."""
+    if not base_dir.is_dir():
+        return []
+    names: list[str] = []
+    for child in sorted(base_dir.iterdir(), key=lambda item: item.name.casefold()):
+        if not child.is_dir():
+            continue
+        if child.name in {".", ".."} or not PROFILE_RE.fullmatch(child.name):
+            continue
+        names.append(child.name)
+    return names
+
+
 def run_paths_for_directory(directory: Path) -> RunPaths:
     return RunPaths(
         directory=directory,
