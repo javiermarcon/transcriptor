@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from .audio import ffprobe_duration
@@ -9,7 +11,9 @@ from .config import Settings, hallucination_phrases_for
 from .models import ProfilePaths, RunPaths
 from .postprocess import DEFAULT_HALLUCINATION_PHRASES, process_whisperx_json
 from .profiles import read_hotwords, read_initial_prompt
-from .progress import parse_progress
+from .progress import Progress, parse_progress
+
+OnProgress = Callable[[Progress], None]
 
 
 def build_whisperx_command(settings: Settings, profile: ProfilePaths, paths: RunPaths) -> list[str]:
@@ -64,7 +68,13 @@ def build_whisperx_command(settings: Settings, profile: ProfilePaths, paths: Run
     return command
 
 
-def run_streaming(command: list[str], total_seconds: float) -> None:
+def run_streaming(
+    command: list[str],
+    total_seconds: float,
+    *,
+    on_progress: OnProgress | None = None,
+    echo_stdout: bool = True,
+) -> None:
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -75,12 +85,19 @@ def run_streaming(command: list[str], total_seconds: float) -> None:
     assert process.stdout is not None
     last_progress = ""
     for line in process.stdout:
-        print(line, end="")
+        if echo_stdout:
+            print(line, end="")
         progress = parse_progress(line, total_seconds)
         if progress:
             rendered = progress.render()
             if rendered != last_progress:
-                print(f"Progreso de audio: {rendered}", flush=True)
+                if echo_stdout:
+                    print(f"Progreso de audio: {rendered}", flush=True)
+                elif on_progress is None:
+                    # Host NM: no ensuciar stdout (canal del protocolo).
+                    print(f"Progreso de audio: {rendered}", file=sys.stderr, flush=True)
+                if on_progress is not None:
+                    on_progress(progress)
                 last_progress = rendered
     return_code = process.wait()
     if return_code != 0:
@@ -96,9 +113,21 @@ def find_generated_json(paths: RunPaths) -> Path:
     return candidates[0]
 
 
-def transcribe_whisperx(settings: Settings, profile: ProfilePaths, paths: RunPaths) -> None:
+def transcribe_whisperx(
+    settings: Settings,
+    profile: ProfilePaths,
+    paths: RunPaths,
+    *,
+    on_progress: OnProgress | None = None,
+    echo_stdout: bool = True,
+) -> None:
     duration = ffprobe_duration(paths.mixed_audio)
-    run_streaming(build_whisperx_command(settings, profile, paths), duration)
+    run_streaming(
+        build_whisperx_command(settings, profile, paths),
+        duration,
+        on_progress=on_progress,
+        echo_stdout=echo_stdout,
+    )
     generated = find_generated_json(paths)
     phrases = hallucination_phrases_for(settings, DEFAULT_HALLUCINATION_PHRASES)
     process_whisperx_json(

@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 from signal import SIGINT
 from unittest.mock import Mock
@@ -270,7 +271,129 @@ def test_stop_recording_validates_and_returns_files(controller, monkeypatch):
     assert stopped["ok"] is True
     assert stopped["data"]["status"] == "ready"
     assert stopped["data"]["files"]["video"].endswith("reunion.mp4")
+    assert stopped["data"]["transcribed"] is False
     assert fake.signals == [SIGINT]
+
+
+def test_stop_recording_can_transcribe(controller, monkeypatch):
+    ctrl, _fake = controller
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.resolve_meet_window",
+        lambda **_k: X11Window(1, "Meet", 800, 600, 0, 0, "firefox"),
+    )
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.video_target_for_window",
+        lambda _w, environ=None: VideoTarget(
+            "window", ":1", 800, 600, window_id=1, label="w"
+        ),
+    )
+    called = {}
+    started_gate = threading.Event()
+    finish_gate = threading.Event()
+
+    def fake_transcribe(settings, profile, paths, *, on_progress=None, echo_stdout=True):
+        called["profile"] = profile.name
+        called["echo_stdout"] = echo_stdout
+        started_gate.set()
+        assert finish_gate.wait(2.0)
+        if on_progress is not None:
+            from meetings_transcriber.progress import Progress
+
+            on_progress(Progress(current=30.0, total=60.0))
+        paths.plain_transcript.write_text("hola", encoding="utf-8")
+        paths.speaker_transcript.write_text("SPEAKER_00: hola", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.transcribe_whisperx",
+        fake_transcribe,
+    )
+    started = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "a",
+            "action": "start_recording",
+            "payload": {"url": "https://meet.google.com/x", "title": "Meet"},
+        }
+    )
+    session_id = started["data"]["session_id"]
+    stopped = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "b",
+            "action": "stop_recording",
+            "payload": {"session_id": session_id, "transcribe": True},
+        }
+    )
+    assert stopped["ok"] is True
+    assert stopped["data"]["transcription_started"] is True
+    assert stopped["data"]["transcribed"] is False
+    assert stopped["data"]["status"] == "transcribing"
+    assert started_gate.wait(2.0)
+
+    status = ctrl.get_status()
+    assert status["status"] == "transcribing"
+    assert status["meeting_dir"]
+
+    finish_gate.set()
+    assert ctrl._tx_thread is not None
+    ctrl._tx_thread.join(timeout=2.0)
+
+    done = ctrl.get_status()
+    assert done["status"] == "ready"
+    assert done["transcribed"] is True
+    assert done["plain_transcript"].endswith("transcripcion.txt")
+    assert called["profile"] == "Shipii"
+    assert called["echo_stdout"] is False
+
+
+def test_stop_recording_transcription_error_still_ok(controller, monkeypatch):
+    ctrl, _fake = controller
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.resolve_meet_window",
+        lambda **_k: X11Window(1, "Meet", 800, 600, 0, 0, "firefox"),
+    )
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.video_target_for_window",
+        lambda _w, environ=None: VideoTarget(
+            "window", ":1", 800, 600, window_id=1, label="w"
+        ),
+    )
+
+    def boom(*_a, **_k):
+        raise RuntimeError("sin GPU")
+
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.transcribe_whisperx",
+        boom,
+    )
+    started = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "a",
+            "action": "start_recording",
+            "payload": {"url": "https://meet.google.com/x", "title": "Meet"},
+        }
+    )
+    stopped = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "b",
+            "action": "stop_recording",
+            "payload": {
+                "session_id": started["data"]["session_id"],
+                "transcribe": True,
+            },
+        }
+    )
+    assert stopped["ok"] is True
+    assert stopped["data"]["transcription_started"] is True
+    assert stopped["data"]["transcribed"] is False
+    assert ctrl._tx_thread is not None
+    ctrl._tx_thread.join(timeout=2.0)
+    done = ctrl.get_status()
+    assert done["status"] == "ready"
+    assert done["transcribed"] is False
+    assert "sin GPU" in done["transcription_error"]
 
 
 def test_window_unavailable_is_explicit_error(controller, monkeypatch):

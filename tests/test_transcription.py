@@ -297,6 +297,30 @@ def test_run_streaming_prints_progress_and_exits_zero(monkeypatch, tmp_path, cap
     assert "Progreso de audio" in captured.out
 
 
+def test_run_streaming_callback_without_stdout(monkeypatch, capsys):
+    class FakePopen:
+        def __init__(self, *args, **kwargs):
+            self.stdout = ["Transcript: [1.00 --> 2.50]\n"]
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("meetings_transcriber.transcription.subprocess.Popen", FakePopen)
+    from meetings_transcriber.transcription import run_streaming
+
+    seen = []
+    run_streaming(
+        ["echo"],
+        5.0,
+        on_progress=lambda p: seen.append(p.render()),
+        echo_stdout=False,
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert seen
+    assert "2.50" in seen[0] or "%" in seen[0]
+
+
 def test_run_streaming_raises_on_nonzero_exit(monkeypatch):
     import subprocess
 

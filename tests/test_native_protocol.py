@@ -116,3 +116,24 @@ def test_validate_start_and_stop_payloads():
     )
     assert error is not None
     assert error["error"]["code"] == "INVALID_REQUEST"
+
+    req, error = validate_request(
+        {
+            "protocol_version": 1,
+            "request_id": "b",
+            "action": "stop_recording",
+            "payload": {"session_id": "s1", "transcribe": True},
+        }
+    )
+    assert error is None
+    assert req["payload"]["transcribe"] is True
+
+    _, error = validate_request(
+        {
+            "protocol_version": 1,
+            "request_id": "c",
+            "action": "stop_recording",
+            "payload": {"session_id": "s1", "transcribe": "si"},
+        }
+    )
+    assert error is not None

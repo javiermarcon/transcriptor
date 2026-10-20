@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,8 @@ from .models import RunPaths
 from .native_protocol import error_response, ok_response, validate_request
 from .portal_screencast import PortalScreenCastError
 from .profiles import create_run_paths, ensure_profile, list_profile_names, validate_profile_name
+from .progress import Progress
+from .transcription import transcribe_whisperx
 from .wayland_capture import (
     ensure_gst_pipewire_available,
     is_wayland_session,
@@ -40,6 +43,19 @@ class ActiveRecording:
     video_label: str
 
 
+@dataclass
+class TranscriptionJob:
+    meeting_dir: str
+    profile_name: str
+    paths: RunPaths
+    progress: dict[str, Any] | None = None
+    done: bool = False
+    transcribed: bool = False
+    error: str | None = None
+    plain_transcript: str | None = None
+    speaker_transcript: str | None = None
+
+
 class NativeHostController:
     """Estado del host: como máximo una grabación activa."""
 
@@ -55,6 +71,10 @@ class NativeHostController:
         self.settings = settings or load_settings(self.project_dir)
         self._active: ActiveRecording | None = None
         self._last_error: str | None = None
+        self._tx_lock = threading.Lock()
+        self._tx_job: TranscriptionJob | None = None
+        self._tx_thread: threading.Thread | None = None
+        self._last_tx_result: dict[str, Any] | None = None
 
     def native_video_source(self) -> VideoSource:
         raw = self.environ.get("NATIVE_VIDEO_SOURCE", "window").strip().lower()
@@ -113,7 +133,10 @@ class NativeHostController:
             if action == "stop_recording":
                 return ok_response(
                     request_id,
-                    self.stop_recording(session_id=payload["session_id"]),
+                    self.stop_recording(
+                        session_id=payload["session_id"],
+                        transcribe=bool(payload.get("transcribe", False)),
+                    ),
                 )
         except (WindowCaptureError, PortalScreenCastError) as exc:
             self._last_error = exc.message
@@ -165,13 +188,31 @@ class NativeHostController:
                 "session_id": None,
                 "message": self._last_error,
             }
+
+        with self._tx_lock:
+            job = self._tx_job
+            if job is not None and not job.done:
+                data: dict[str, Any] = {
+                    "status": "transcribing",
+                    "session_id": None,
+                    "meeting_dir": job.meeting_dir,
+                    "profile": job.profile_name,
+                }
+                if job.progress is not None:
+                    data["progress"] = dict(job.progress)
+                return data
+            last_tx = dict(self._last_tx_result) if self._last_tx_result else None
+
         if self._last_error:
             return {
                 "status": "error",
                 "session_id": None,
                 "message": self._last_error,
             }
-        return {"status": "ready", "session_id": None}
+        ready: dict[str, Any] = {"status": "ready", "session_id": None}
+        if last_tx:
+            ready.update(last_tx)
+        return ready
 
     def list_profiles(self) -> dict[str, Any]:
         profiles = list_profile_names(self.settings.base_dir)
@@ -190,6 +231,9 @@ class NativeHostController:
     ) -> dict[str, Any]:
         if self._active is not None and self._active.session.is_running:
             raise RuntimeError("BUSY: ya hay una grabación en curso")
+        with self._tx_lock:
+            if self._tx_job is not None and not self._tx_job.done:
+                raise RuntimeError("BUSY: hay una transcripción en curso")
         if self._active is not None:
             self._active = None
 
@@ -254,6 +298,8 @@ class NativeHostController:
             video_label=target.label,
         )
         self._last_error = None
+        with self._tx_lock:
+            self._last_tx_result = None
         return {
             "session_id": session_id,
             "status": "recording",
@@ -265,7 +311,12 @@ class NativeHostController:
             "meet_title": title,
         }
 
-    def stop_recording(self, *, session_id: str) -> dict[str, Any]:
+    def stop_recording(
+        self,
+        *,
+        session_id: str,
+        transcribe: bool = False,
+    ) -> dict[str, Any]:
         active = self._active
         if active is None:
             raise RuntimeError("NO_SESSION: no hay una sesión de grabación activa")
@@ -278,8 +329,7 @@ class NativeHostController:
         finally:
             self._active = None
 
-        self._last_error = None
-        return {
+        result: dict[str, Any] = {
             "status": "ready",
             "session_id": session_id.strip(),
             "meeting_dir": str(active.paths.directory),
@@ -287,6 +337,8 @@ class NativeHostController:
             "video_source": active.video_source,
             "video_label": active.video_label,
             "ffmpeg_return_code": return_code,
+            "transcribed": False,
+            "transcription_started": False,
             "files": {
                 "system_audio": str(active.paths.system_audio),
                 "microphone_audio": str(active.paths.microphone_audio),
@@ -294,6 +346,88 @@ class NativeHostController:
                 "video": str(active.paths.video),
             },
         }
+
+        self._last_error = None
+        if transcribe:
+            self._start_transcription_job(active)
+            result["transcription_started"] = True
+            result["status"] = "transcribing"
+        return result
+
+    def _progress_payload(self, progress: Progress) -> dict[str, Any]:
+        return {
+            "percent": round(progress.percent, 2),
+            "current_s": progress.current,
+            "total_s": progress.total,
+            "label": progress.render(),
+        }
+
+    def _start_transcription_job(self, active: ActiveRecording) -> None:
+        job = TranscriptionJob(
+            meeting_dir=str(active.paths.directory),
+            profile_name=active.profile_name,
+            paths=active.paths,
+        )
+        with self._tx_lock:
+            self._tx_job = job
+            self._last_tx_result = None
+
+        def run() -> None:
+            try:
+                profile = ensure_profile(self.settings.base_dir, active.profile_name)
+
+                def on_progress(progress: Progress) -> None:
+                    payload = self._progress_payload(progress)
+                    with self._tx_lock:
+                        if self._tx_job is job:
+                            self._tx_job.progress = payload
+
+                transcribe_whisperx(
+                    self.settings,
+                    profile,
+                    active.paths,
+                    on_progress=on_progress,
+                    echo_stdout=False,
+                )
+                plain = str(active.paths.plain_transcript)
+                speakers = str(active.paths.speaker_transcript)
+                result: dict[str, Any] = {
+                    "transcribed": True,
+                    "transcription_error": None,
+                    "meeting_dir": str(active.paths.directory),
+                    "profile": active.profile_name,
+                    "plain_transcript": plain,
+                    "speaker_transcript": speakers,
+                }
+                with self._tx_lock:
+                    job.done = True
+                    job.transcribed = True
+                    job.plain_transcript = plain
+                    job.speaker_transcript = speakers
+                    self._last_tx_result = result
+                    if self._tx_job is job:
+                        self._tx_job = None
+            except Exception as exc:
+                result = {
+                    "transcribed": False,
+                    "transcription_error": str(exc),
+                    "meeting_dir": str(active.paths.directory),
+                    "profile": active.profile_name,
+                }
+                with self._tx_lock:
+                    job.done = True
+                    job.error = str(exc)
+                    self._last_tx_result = result
+                    if self._tx_job is job:
+                        self._tx_job = None
+
+        thread = threading.Thread(
+            target=run,
+            name="whisperx-transcribe",
+            daemon=True,
+        )
+        self._tx_thread = thread
+        thread.start()
 
     def _resolve_window_target(self, *, url: str, title: str):
         """X11 por window_id si hay ventanas Firefox; si no, portal Wayland."""

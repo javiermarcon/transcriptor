@@ -649,7 +649,10 @@ Protocolo v1 (mismas formas que la extensión):
 | `get_status` | `{}` | `{ "status": "ready"\|"recording"\|"error", "session_id"?: "..." }` |
 | `list_profiles` | `{}` | `{ "profiles": ["Shipii", …], "default_profile"?: "Shipii" }` |
 | `start_recording` | `{ "url", "title", "profile"? }` | incluye `session_id`, `status`, `profile`, `video_source`, `meeting_dir` |
-| `stop_recording` | `{ "session_id" }` | `{ "status": "ready", ... archivos ... }` |
+| `stop_recording` | `{ "session_id", "transcribe"? }` | `{ "status": "ready", "transcribed", ... archivos ... }` |
+
+Con `transcribe: true` el host detiene FFmpeg y luego corre WhisperX (puede
+demorar varios minutos). Con `false` o ausente solo guarda la grabación.
 
 El perfil se elige desde la extensión con `list_profiles` + `profile` en
 `start_recording`. Si la extensión no envía `profile`, se usa

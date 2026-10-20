@@ -122,7 +122,13 @@ def validate_request(
                 "INVALID_REQUEST",
                 "stop_recording requiere payload.session_id string.",
             )
-        extra = set(payload) - {"session_id"}
+        if "transcribe" in payload and not isinstance(payload.get("transcribe"), bool):
+            return None, error_response(
+                request_id,
+                "INVALID_REQUEST",
+                "stop_recording.payload.transcribe debe ser boolean.",
+            )
+        extra = set(payload) - {"session_id", "transcribe"}
         if extra:
             return None, error_response(
                 request_id,
