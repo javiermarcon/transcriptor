@@ -2,6 +2,10 @@
 
 Aplicación local para grabar, transcribir y diarizar reuniones. La implementación principal está en Python para poder reutilizarla más adelante desde Kivy, una API local o una aplicación de escritorio. El script Bash es solamente un lanzador.
 
+Para controlar grabaciones desde Google Meet en Firefox, usá la extensión
+[transcriptor-firefox](https://github.com/javiermarcon/transcriptor-firefox)
+junto con el host Native Messaging de este repo (ver sección más abajo).
+
 ## Cambios de esta versión
 
 - Código Python separado por responsabilidades.
@@ -20,7 +24,7 @@ Aplicación local para grabar, transcribir y diarizar reuniones. La implementaci
 - `DEVICE=auto` elige CUDA o CPU según la máquina; plantilla `meetings-transcriptor.env.example`.
 - Knobs de WhisperX configurables (beam, VAD, umbrales) y filtro de alucinaciones en posprocesado.
 - Preparado para una futura interfaz Kivy.
-- Host Firefox Native Messaging (`com.meetings.transcriptor`) con captura por ventana X11 y fallback explícito a monitor.
+- Host Firefox Native Messaging (`com.meetings.transcriptor`) con captura por ventana X11/Wayland y fallback explícito a monitor; UI en [transcriptor-firefox](https://github.com/javiermarcon/transcriptor-firefox).
 
 ## Estructura
 
@@ -371,7 +375,7 @@ Notas:
 | `RECORD_VIDEO` | Grabar el monitor y audio mezclado en MP4 | `true` |
 | `VIDEO_MONITOR` | Salida `primary` de xrandr o nombre explícito | `primary` |
 | `VIDEO_FPS` | Frames por segundo de la captura | `10` |
-| `NATIVE_MESSAGING_PROFILE` | Perfil usado por el host Firefox | obligatorio para la extensión |
+| `NATIVE_MESSAGING_PROFILE` | Perfil default del host Firefox (fallback si la extensión no envía `profile`) | opcional |
 | `NATIVE_VIDEO_SOURCE` | `window` (default del host) o `monitor` (fallback explícito) | `window` |
 
 ## Perfiles
@@ -649,26 +653,55 @@ pip install -e '.[dev]'
 
 ## Native Messaging (extensión Firefox)
 
-El host local `com.meetings.transcriptor` permite a la extensión
-[`transcriptor-firefox`](../transcriptor-firefox) consultar estado, iniciar y
-detener una grabación. **No** implementa la UI de Firefox aquí y **no** graba
-desde JavaScript.
+La UI de Firefox vive en un repo aparte:
+[javiermarcon/transcriptor-firefox](https://github.com/javiermarcon/transcriptor-firefox).
 
-Protocolo v1 (mismas formas que la extensión):
+Este proyecto es el **host** nativo `com.meetings.transcriptor`: graba con
+FFmpeg/WhisperX. La extensión solo controla (popup, Meet, Native Messaging).
+**No** se implementa la UI aquí y **no** se graba desde JavaScript.
+
+### Uso con la extensión
+
+1. **Instalá este host** (deps Python, `.env` con `HF_TOKEN`, perfiles bajo
+   `BASE_DIR`) y registrá el manifiesto:
+   ```bash
+   ./scripts/native-messaging.sh install
+   ./scripts/native-messaging.sh verify
+   ```
+2. **Cloná y cargá la extensión** (carga temporal; se pierde al cerrar Firefox):
+   ```bash
+   git clone https://github.com/javiermarcon/transcriptor-firefox.git
+   ```
+   En Firefox: `about:debugging#/runtime/this-firefox` →
+   **Cargar complemento temporal…** → elegí el `manifest.json` del clone.
+   ID fijo: `meetings-transcriptor@example.org` (debe coincidir con
+   `allowed_extensions` del manifiesto nativo).
+3. Abrí una pestaña `https://meet.google.com/…`, abrí el popup de la extensión.
+4. Elegí el **perfil** (la extensión llama `list_profiles`; si no mandás
+   `profile`, el host usa `NATIVE_MESSAGING_PROFILE`).
+5. **Iniciar grabación** / **Detener**. Al detener, la extensión puede pedir
+   transcribir ahora; el host corre WhisperX y el popup muestra el progreso.
+6. Si el popup dice **Desconectado**, el host no está instalado o el manifiesto
+   no apunta al wrapper correcto: volvé a `./scripts/native-messaging.sh verify`.
+
+Detalle de UI, pruebas y limitaciones de la extensión: README y docs del
+[repo Firefox](https://github.com/javiermarcon/transcriptor-firefox).
+
+### Protocolo v1
 
 | Acción | Payload | Respuesta `data` (éxito) |
 |---|---|---|
-| `get_status` | `{}` | `{ "status": "ready"\|"recording"\|"error", "session_id"?: "..." }` |
+| `get_status` | `{}` | `{ "status": "ready"\|"recording"\|"error"\|"transcribing", "session_id"?: "…", "progress"?: … }` |
 | `list_profiles` | `{}` | `{ "profiles": ["Shipii", …], "default_profile"?: "Shipii" }` |
 | `start_recording` | `{ "url", "title", "profile"? }` | incluye `session_id`, `status`, `profile`, `video_source`, `meeting_dir` |
-| `stop_recording` | `{ "session_id", "transcribe"? }` | `{ "status": "ready", "transcribed", ... archivos ... }` |
+| `stop_recording` | `{ "session_id", "transcribe"? }` | `{ "status": "ready", "transcribed", … archivos … }` |
 
 Con `transcribe: true` el host detiene FFmpeg y luego corre WhisperX (puede
 demorar varios minutos). Con `false` o ausente solo guarda la grabación.
 
-El perfil se elige desde la extensión con `list_profiles` + `profile` en
-`start_recording`. Si la extensión no envía `profile`, se usa
-`NATIVE_MESSAGING_PROFILE` como fallback.
+La extensión también puede enviar `record_meet_event` (metadatos de
+participantes/hablante en Meet). La persistencia de esos eventos en el host
+aún puede estar pendiente; no afecta grabar ni transcribir.
 
 ### Captura de video desde la extensión
 
