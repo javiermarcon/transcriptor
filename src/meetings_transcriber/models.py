@@ -22,9 +22,17 @@ class RunPaths:
     plain_transcript: Path
     speaker_transcript: Path
     video: Path = field(init=False)
+    session_meta: Path = field(init=False)
+    meet_events: Path = field(init=False)
+    attributed_transcript: Path = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "video", self.directory / "reunion.mp4")
+        object.__setattr__(self, "session_meta", self.directory / "session.json")
+        object.__setattr__(self, "meet_events", self.directory / "meet_events.jsonl")
+        object.__setattr__(
+            self, "attributed_transcript", self.directory / "transcripcion_atribuida.json"
+        )
 
 
 @dataclass(frozen=True)

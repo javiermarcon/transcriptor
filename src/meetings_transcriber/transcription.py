@@ -7,6 +7,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from .attribution import write_attributed_transcript
 from .audio import ffprobe_duration
 from .config import Settings, hallucination_phrases_for
 from .models import ProfilePaths, RunPaths
@@ -151,6 +152,13 @@ def transcribe_whisperx(
         generated,
         paths.plain_transcript,
         paths.speaker_transcript,
+        hallucination_phrases=phrases,
+    )
+    write_attributed_transcript(
+        generated,
+        paths.attributed_transcript,
+        paths,
+        local_participant_name=settings.local_participant_name,
         hallucination_phrases=phrases,
     )
 

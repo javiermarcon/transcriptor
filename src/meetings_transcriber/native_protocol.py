@@ -6,7 +6,15 @@ PROTOCOL_VERSION = 1
 NATIVE_HOST_NAME = "com.meetings.transcriptor"
 ALLOWED_EXTENSION_ID = "meetings-transcriptor@example.org"
 
-ACTIONS = frozenset({"get_status", "list_profiles", "start_recording", "stop_recording"})
+ACTIONS = frozenset(
+    {
+        "get_status",
+        "list_profiles",
+        "start_recording",
+        "stop_recording",
+        "record_meet_event",
+    }
+)
 
 # Límite de Native Messaging en Firefox (~1 MiB). Usamos un tope conservador.
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -135,6 +143,17 @@ def validate_request(
                 "INVALID_REQUEST",
                 f"Campos no permitidos en payload: {', '.join(sorted(extra))}",
             )
+    elif action == "record_meet_event":
+        from .meet_events import validate_meet_event_payload
+
+        event, message = validate_meet_event_payload(payload)
+        if event is None:
+            return None, error_response(
+                request_id,
+                "INVALID_REQUEST",
+                message or "record_meet_event inválido.",
+            )
+        payload = event
     elif action in {"get_status", "list_profiles"}:
         if payload:
             return None, error_response(

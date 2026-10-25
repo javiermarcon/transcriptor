@@ -649,3 +649,66 @@ def test_ffmpeg_error_on_bad_return_code(controller, monkeypatch):
     )
     assert stopped["ok"] is False
     assert stopped["error"]["code"] == "FFMPEG_ERROR"
+
+
+def test_record_meet_event_persists_jsonl(controller, monkeypatch):
+    ctrl, _fake = controller
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.resolve_meet_window",
+        lambda **_k: X11Window(1, "Meet", 800, 600, 0, 0, "firefox"),
+    )
+    monkeypatch.setattr(
+        "meetings_transcriber.native_controller.video_target_for_window",
+        lambda _w, environ=None: VideoTarget(
+            "window", ":1", 800, 600, window_id=1, label="w"
+        ),
+    )
+    started = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "a",
+            "action": "start_recording",
+            "payload": {"url": "https://meet.google.com/x", "title": "Meet"},
+        }
+    )
+    assert started["ok"] is True
+    session_id = started["data"]["session_id"]
+    meeting_dir = Path(started["data"]["meeting_dir"])
+    assert (meeting_dir / "session.json").is_file()
+
+    recorded = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "e1",
+            "action": "record_meet_event",
+            "payload": {
+                "session_id": session_id,
+                "event_type": "active_speaker_changed",
+                "timestamp_epoch_ms": 1_700_000_000_000,
+                "display_name": "Nacho",
+                "participant_key": "dom:nacho",
+                "confidence": 0.7,
+                "source": "dom_speaking_attr",
+            },
+        }
+    )
+    assert recorded["ok"] is True
+    assert recorded["data"]["recorded"] is True
+    events_path = meeting_dir / "meet_events.jsonl"
+    assert events_path.is_file()
+    assert "Nacho" in events_path.read_text(encoding="utf-8")
+
+    wrong = ctrl.handle(
+        {
+            "protocol_version": 1,
+            "request_id": "e2",
+            "action": "record_meet_event",
+            "payload": {
+                "session_id": "other",
+                "event_type": "participant_joined",
+                "timestamp_epoch_ms": 1,
+            },
+        }
+    )
+    assert wrong["ok"] is False
+    assert wrong["error"]["code"] == "NO_SESSION"

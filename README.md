@@ -47,6 +47,9 @@ transcriptor/
 │       ├── native_host.py
 │       ├── native_messaging_install.py
 │       ├── native_protocol.py
+│       ├── meet_events.py
+│       ├── attribution.py
+│       ├── audio_energy.py
 │       ├── postprocess.py
 │       ├── profiles.py
 │       ├── progress.py
@@ -54,8 +57,10 @@ transcriptor/
 │       └── window_capture.py
 └── tests/
     ├── test_audio.py
+    ├── test_attribution.py
     ├── test_cli.py
     ├── test_config.py
+    ├── test_meet_events.py
     ├── test_native_controller.py
     ├── test_native_host.py
     ├── test_native_messaging_install.py
@@ -80,8 +85,11 @@ textos_reuniones/
 │       ├── reunion_mezclada.json
 │       ├── reunion.mp4
 │       ├── sistema.wav
+│       ├── session.json
+│       ├── meet_events.jsonl
 │       ├── transcripcion.txt
-│       └── transcripcion_speakers.txt
+│       ├── transcripcion_speakers.txt
+│       └── transcripcion_atribuida.json
 └── motonave/
     ├── initial_prompt.txt
     ├── hotwords.txt
@@ -377,6 +385,7 @@ Notas:
 | `VIDEO_FPS` | Frames por segundo de la captura | `10` |
 | `NATIVE_MESSAGING_PROFILE` | Perfil default del host Firefox (fallback si la extensión no envía `profile`) | opcional |
 | `NATIVE_VIDEO_SOURCE` | `window` (default del host) o `monitor` (fallback explícito) | `window` |
+| `LOCAL_PARTICIPANT_NAME` | Nombre del hablante local (mic) para atribución; sin inventar IDs | opcional |
 
 ## Perfiles
 
@@ -695,13 +704,77 @@ Detalle de UI, pruebas y limitaciones de la extensión: README y docs del
 | `list_profiles` | `{}` | `{ "profiles": ["Shipii", …], "default_profile"?: "Shipii" }` |
 | `start_recording` | `{ "url", "title", "profile"? }` | incluye `session_id`, `status`, `profile`, `video_source`, `meeting_dir` |
 | `stop_recording` | `{ "session_id", "transcribe"? }` | `{ "status": "ready", "transcribed", … archivos … }` |
+| `record_meet_event` | evento Meet (ver extensión) | `{ "recorded": true }` |
 
 Con `transcribe: true` el host detiene FFmpeg y luego corre WhisperX (puede
 demorar varios minutos). Con `false` o ausente solo guarda la grabación.
 
-La extensión también puede enviar `record_meet_event` (metadatos de
-participantes/hablante en Meet). La persistencia de esos eventos en el host
-aún puede estar pendiente; no afecta grabar ni transcribir.
+La extensión envía `record_meet_event` (metadatos de participantes/hablante
+visual en Meet). El host los persiste en `meet_events.jsonl` de la reunión
+activa (ver atribución más abajo).
+
+### Atribución de hablantes
+
+WhisperX diariza sobre `reunion_mezclada.wav` y produce `SPEAKER_00`,
+`SPEAKER_01`, …. Esos IDs **se conservan**.
+
+Tras la transcripción se genera `transcripcion_atribuida.json` (salida
+adicional; no reemplaza `reunion_mezclada.json` ni `transcripcion_speakers.txt`).
+
+**Pistas de audio:** la grabación ya guarda por separado `microfono.wav`
+(local) y `sistema.wav` (remoto/monitor del sink). WhisperX solo oye la
+mezcla, así que con la mezcla sola no se puede saber si `SPEAKER_00` es
+Javier o Nacho. Con las pistas separadas sí se puede estimar qué cluster
+corresponde al micrófono local. **No** hace falta cambiar el pipeline de
+FFmpeg: las pistas independientes ya existen.
+
+**Fuentes de evidencia (ninguna alcanza sola si es débil):**
+
+| Fuente | Qué prueba | Límites |
+|---|---|---|
+| `local_microphone` | Dominio claro de energía en `microfono.wav` vs `sistema.wav` en los segmentos de un `SPEAKER_*` | Requiere `LOCAL_PARTICIPANT_NAME` (p. ej. `Javier`). Eco/auriculares pueden confundir. |
+| `meet_active_speaker` | Eventos `active_speaker_changed` alineados al audio con ventana de incertidumbre (~1.5 s) | No usa solo el roster (`participant_joined`). Un blink visual no atribuye un segmento entero. |
+| `combined` | Mic y Meet coinciden en el mismo nombre para el mismo `SPEAKER_*` | Si discrepan, se deja desconocido. |
+
+No se asignan nombres por orden de IDs (`SPEAKER_00`≠Javier por convención).
+Si la evidencia no alcanza, `attributed_name` queda `null`.
+
+Configuración:
+
+```bash
+export LOCAL_PARTICIPANT_NAME=Javier
+```
+
+#### Esquema de `transcripcion_atribuida.json`
+
+```json
+{
+  "schema_version": 1,
+  "notes": ["…"],
+  "speakers": {
+    "SPEAKER_00": {
+      "attributed_name": "Javier",
+      "confidence": 0.81,
+      "source": "local_microphone",
+      "evidence": { "mic_dominance": 0.91, "speech_s": 42.5 }
+    }
+  },
+  "segments": [
+    {
+      "start": 12.4,
+      "end": 15.1,
+      "text": "…",
+      "speaker_id": "SPEAKER_00",
+      "attributed_name": "Javier",
+      "attribution": {
+        "confidence": 0.81,
+        "source": "local_microphone",
+        "meet_event_refs": []
+      }
+    }
+  ]
+}
+```
 
 ### Captura de video desde la extensión
 

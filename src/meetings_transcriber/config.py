@@ -44,6 +44,8 @@ class Settings:
     condition_on_previous_text: bool = False
     filter_hallucinations: bool = True
     extra_hallucination_phrases: tuple[str, ...] = ()
+    # Nombre del participante local (micrófono) para atribución; no se inventa.
+    local_participant_name: str | None = None
 
 
 def _existing_executable(value: str | None) -> Path | None:
@@ -184,6 +186,9 @@ def load_settings(
         condition_on_previous_text=_env_bool("CONDITION_ON_PREVIOUS_TEXT", False),
         filter_hallucinations=_env_bool("FILTER_HALLUCINATIONS", True),
         extra_hallucination_phrases=parse_phrase_list(os.getenv("EXTRA_HALLUCINATION_PHRASES")),
+        local_participant_name=(
+            os.getenv("LOCAL_PARTICIPANT_NAME", "").strip() or None
+        ),
     )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, Literal
 
 from .audio import RecordingSession, detect_video_codec, resolve_monitor_video_target
 from .config import Settings, load_settings
+from .meet_events import append_meet_event, write_session_meta
 from .models import RunPaths
 from .native_protocol import error_response, ok_response, validate_request
 from .portal_screencast import PortalScreenCastError
@@ -41,6 +43,7 @@ class ActiveRecording:
     meet_title: str
     video_source: str
     video_label: str
+    recording_started_at_epoch_ms: float
 
 
 @dataclass
@@ -138,6 +141,8 @@ class NativeHostController:
                         transcribe=bool(payload.get("transcribe", False)),
                     ),
                 )
+            if action == "record_meet_event":
+                return ok_response(request_id, self.record_meet_event(payload))
         except (WindowCaptureError, PortalScreenCastError) as exc:
             self._last_error = exc.message
             return error_response(request_id, exc.code, exc.message)
@@ -287,6 +292,21 @@ class NativeHostController:
                 f"FFmpeg no permaneció en ejecución tras el inicio (código {code})"
             )
 
+        started_ms = time.time() * 1000.0
+        write_session_meta(
+            paths.session_meta,
+            {
+                "session_id": session_id,
+                "recording_started_at_epoch_ms": started_ms,
+                "meet_url": url,
+                "meet_title": title,
+                "profile": profile_paths.name,
+                "video_source": target.source,
+                "video_label": target.label,
+                "local_participant_name": self.settings.local_participant_name,
+            },
+        )
+
         self._active = ActiveRecording(
             session_id=session_id,
             session=session,
@@ -296,6 +316,7 @@ class NativeHostController:
             meet_title=title,
             video_source=target.source,
             video_label=target.label,
+            recording_started_at_epoch_ms=started_ms,
         )
         self._last_error = None
         with self._tx_lock:
@@ -344,6 +365,8 @@ class NativeHostController:
                 "microphone_audio": str(active.paths.microphone_audio),
                 "mixed_audio": str(active.paths.mixed_audio),
                 "video": str(active.paths.video),
+                "meet_events": str(active.paths.meet_events),
+                "session_meta": str(active.paths.session_meta),
             },
         }
 
@@ -353,6 +376,15 @@ class NativeHostController:
             result["transcription_started"] = True
             result["status"] = "transcribing"
         return result
+
+    def record_meet_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        active = self._active
+        if active is None or not active.session.is_running:
+            raise RuntimeError("NO_SESSION: no hay una sesión de grabación activa")
+        if active.session_id != str(event.get("session_id", "")).strip():
+            raise RuntimeError("NO_SESSION: session_id no coincide con la sesión activa")
+        append_meet_event(active.paths.meet_events, event)
+        return {"recorded": True}
 
     def _progress_payload(self, progress: Progress) -> dict[str, Any]:
         return {
