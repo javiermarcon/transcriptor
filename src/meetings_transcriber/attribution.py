@@ -10,12 +10,13 @@ from typing import Any, Literal
 from .audio_energy import rms_for_interval
 from .meet_events import load_meet_events, load_session_meta
 from .models import RunPaths
-from .postprocess import clean_segments, segment_speaker
+from .postprocess import clean_segments, collapse_repeated_sentences, segment_speaker
 
 SCHEMA_VERSION = 1
 
 AttributionSource = Literal[
     "local_microphone",
+    "local_microphone_adjacent",
     "meet_active_speaker",
     "combined",
 ]
@@ -25,8 +26,12 @@ DEFAULT_SYNC_UNCERTAINTY_S = 1.5
 DEFAULT_ACTIVE_HOLD_S = 2.0
 # Mic: el hablante local debe dominar claramente frente al resto.
 MIC_DOMINANCE_MIN = 0.62
-MIC_DOMINANCE_MARGIN = 0.12
 MIC_MIN_SPEECH_S = 1.5
+# Diarización a veces parte la misma voz local en otro SPEAKER_* breve
+# intercalado; se promueve si queda a ≤ este hueco de un ancla mic.
+LOCAL_ADJACENCY_GAP_S = 2.0
+LOCAL_ADJACENCY_RUN_GAP_S = 5.0
+LOCAL_ADJACENCY_CONFIDENCE = 0.62
 # Meet: votos suficientes y margen frente al segundo nombre.
 # ~2 solapes fuertes con confidence≈0.7; un solo blink visual no alcanza.
 MEET_MIN_WEIGHTED_VOTES = 1.2
@@ -89,43 +94,53 @@ def _mic_dominance_scores(
     return scores
 
 
+def resolve_local_microphone_attributions(
+    mic_scores: dict[str, dict[str, float]],
+    local_name: str,
+) -> dict[str, SpeakerAttribution]:
+    """Atribuye al mic local todos los SPEAKER_* con dominio claro.
+
+    WhisperX a veces parte la misma voz en varios IDs. Si cada cluster supera
+    el umbral de micrófono, todos reciben el mismo nombre local.
+    """
+    name = local_name.strip()
+    if not name:
+        return {}
+    eligible = [
+        (speaker, data["mic_dominance"], data["speech_s"])
+        for speaker, data in mic_scores.items()
+        if data["speech_s"] >= MIC_MIN_SPEECH_S and data["mic_dominance"] >= MIC_DOMINANCE_MIN
+    ]
+    if not eligible:
+        return {}
+    best_dom = max(item[1] for item in eligible)
+    result: dict[str, SpeakerAttribution] = {}
+    for speaker_id, dom, speech in eligible:
+        confidence = min(0.92, 0.55 + (dom - MIC_DOMINANCE_MIN) + max(0.0, best_dom - dom) * 0.5)
+        result[speaker_id] = SpeakerAttribution(
+            speaker_id=speaker_id,
+            attributed_name=name,
+            confidence=round(confidence, 3),
+            source="local_microphone",
+            evidence={
+                "mic_dominance": round(dom, 3),
+                "best_mic_dominance": round(best_dom, 3),
+                "speech_s": round(speech, 3),
+                "local_clusters": len(eligible),
+            },
+        )
+    return result
+
+
 def resolve_local_microphone_attribution(
     mic_scores: dict[str, dict[str, float]],
     local_name: str,
 ) -> SpeakerAttribution | None:
-    """Atribuye como máximo un SPEAKER_* al participante local vía micrófono."""
-    name = local_name.strip()
-    if not name:
+    """Compat: devuelve la mejor atribución local o None."""
+    attrs = resolve_local_microphone_attributions(mic_scores, local_name)
+    if not attrs:
         return None
-    ranked = sorted(
-        (
-            (speaker, data["mic_dominance"], data["speech_s"])
-            for speaker, data in mic_scores.items()
-        ),
-        key=lambda item: item[1],
-        reverse=True,
-    )
-    if not ranked:
-        return None
-    best_id, best_dom, best_speech = ranked[0]
-    if best_speech < MIC_MIN_SPEECH_S or best_dom < MIC_DOMINANCE_MIN:
-        return None
-    second_dom = ranked[1][1] if len(ranked) > 1 else 0.0
-    if best_dom - second_dom < MIC_DOMINANCE_MARGIN:
-        return None
-    # Confianza acotada: margen y dominio, nunca 1.0 por ruido/eco.
-    confidence = min(0.92, 0.55 + (best_dom - MIC_DOMINANCE_MIN) + (best_dom - second_dom))
-    return SpeakerAttribution(
-        speaker_id=best_id,
-        attributed_name=name,
-        confidence=round(confidence, 3),
-        source="local_microphone",
-        evidence={
-            "mic_dominance": round(best_dom, 3),
-            "second_mic_dominance": round(second_dom, 3),
-            "speech_s": round(best_speech, 3),
-        },
-    )
+    return max(attrs.values(), key=lambda item: item.confidence)
 
 
 def _ambiguous_display_names(events: Sequence[dict[str, Any]]) -> set[str]:
@@ -297,34 +312,182 @@ def resolve_meet_attributions(
 
 
 def merge_speaker_attributions(
-    mic_attr: SpeakerAttribution | None,
+    mic_attrs: dict[str, SpeakerAttribution] | SpeakerAttribution | None,
     meet_attrs: dict[str, SpeakerAttribution],
 ) -> dict[str, SpeakerAttribution]:
     """Combina fuentes; ante conflicto de nombre distinto en el mismo speaker, descarta."""
     merged = dict(meet_attrs)
-    if mic_attr is None:
+    if mic_attrs is None:
         return merged
-    existing = merged.get(mic_attr.speaker_id)
-    if existing is None:
-        merged[mic_attr.speaker_id] = mic_attr
-        return merged
-    if _normalize_name(existing.attributed_name or "") == _normalize_name(
-        mic_attr.attributed_name or ""
-    ):
-        merged[mic_attr.speaker_id] = SpeakerAttribution(
-            speaker_id=mic_attr.speaker_id,
-            attributed_name=mic_attr.attributed_name,
-            confidence=round(min(0.95, (existing.confidence + mic_attr.confidence) / 2 + 0.08), 3),
-            source="combined",
-            evidence={
-                "local_microphone": mic_attr.evidence,
-                "meet_active_speaker": existing.evidence,
-            },
-        )
-        return merged
-    # Conflicto mic vs Meet sobre el mismo SPEAKER_*: no inventar; dejar desconocido.
-    merged.pop(mic_attr.speaker_id, None)
+    if isinstance(mic_attrs, SpeakerAttribution):
+        mic_map = {mic_attrs.speaker_id: mic_attrs}
+    else:
+        mic_map = mic_attrs
+    for speaker_id, mic_attr in mic_map.items():
+        existing = merged.get(speaker_id)
+        if existing is None:
+            merged[speaker_id] = mic_attr
+            continue
+        if _normalize_name(existing.attributed_name or "") == _normalize_name(
+            mic_attr.attributed_name or ""
+        ):
+            merged[speaker_id] = SpeakerAttribution(
+                speaker_id=speaker_id,
+                attributed_name=mic_attr.attributed_name,
+                confidence=round(
+                    min(0.95, (existing.confidence + mic_attr.confidence) / 2 + 0.08),
+                    3,
+                ),
+                source="combined",
+                evidence={
+                    "local_microphone": mic_attr.evidence,
+                    "meet_active_speaker": existing.evidence,
+                },
+            )
+            continue
+        # Conflicto mic vs Meet sobre el mismo SPEAKER_*: no inventar.
+        merged.pop(speaker_id, None)
     return merged
+
+
+def _interval_gap(a0: float, a1: float, b0: float, b1: float) -> float:
+    if a1 < b0:
+        return b0 - a1
+    if b1 < a0:
+        return a0 - b1
+    return 0.0
+
+
+def _contiguous_speaker_runs(
+    out_segments: Sequence[dict[str, Any]],
+) -> list[list[int]]:
+    """Índices de tramos consecutivos del mismo speaker_id (huecos cortos)."""
+    runs: list[list[int]] = []
+    current: list[int] = []
+    prev_id: str | None = None
+    prev_end: float | None = None
+    for index, segment in enumerate(out_segments):
+        speaker_id = str(segment["speaker_id"])
+        start = float(segment["start"])
+        end = float(segment["end"])
+        if (
+            current
+            and prev_id == speaker_id
+            and prev_end is not None
+            and start - prev_end <= LOCAL_ADJACENCY_RUN_GAP_S
+        ):
+            current.append(index)
+        else:
+            if current:
+                runs.append(current)
+            current = [index]
+            prev_id = speaker_id
+        prev_end = end
+    if current:
+        runs.append(current)
+    return runs
+
+
+def promote_local_adjacent_segments(
+    document: dict[str, Any],
+    *,
+    local_participant_name: str | None,
+    speaker_map: dict[str, SpeakerAttribution],
+) -> dict[str, Any]:
+    """Nombra tramos SPEAKER_* huérfanos pegados a voz local atribuida por mic.
+
+    WhisperX a veces parte la misma voz en otro ID entre dos frases locales.
+    No encadena atribuciones adyacentes entre sí (evita arrastrar audio de
+    pantalla/compartidos lejanos).
+    """
+    name = (local_participant_name or "").strip()
+    if not name:
+        return document
+    local_norm = _normalize_name(name)
+    foreign_ids = {
+        speaker_id
+        for speaker_id, attr in speaker_map.items()
+        if attr.attributed_name
+        and _normalize_name(attr.attributed_name) != local_norm
+    }
+    segments = document["segments"]
+    anchors: list[tuple[float, float]] = []
+    for segment in segments:
+        attribution = segment.get("attribution") or {}
+        if attribution.get("source") not in {"local_microphone", "combined"}:
+            continue
+        attributed = segment.get("attributed_name")
+        if not isinstance(attributed, str) or _normalize_name(attributed) != local_norm:
+            continue
+        anchors.append((float(segment["start"]), float(segment["end"])))
+    if not anchors:
+        return document
+
+    promoted = 0
+    for run in _contiguous_speaker_runs(segments):
+        speaker_id = str(segments[run[0]]["speaker_id"])
+        if speaker_id in foreign_ids:
+            continue
+        if any(segments[index].get("attributed_name") for index in run):
+            continue
+        run_start = float(segments[run[0]]["start"])
+        run_end = float(segments[run[-1]]["end"])
+        if not any(
+            _interval_gap(run_start, run_end, a0, a1) <= LOCAL_ADJACENCY_GAP_S
+            for a0, a1 in anchors
+        ):
+            continue
+        for index in run:
+            segments[index]["attributed_name"] = name
+            segments[index]["attribution"] = {
+                "confidence": LOCAL_ADJACENCY_CONFIDENCE,
+                "source": "local_microphone_adjacent",
+                "meet_event_refs": [],
+            }
+        promoted += 1
+
+    if promoted:
+        notes = list(document.get("notes") or [])
+        notes.append(
+            f"Se atribuyeron {promoted} tramo(s) SPEAKER_* intercalados junto a "
+            f"voz local (hueco ≤ {LOCAL_ADJACENCY_GAP_S:g}s); no implica el ID entero."
+        )
+        document["notes"] = notes
+    return document
+
+
+def render_attributed_speakers_txt(segments: Sequence[dict[str, Any]]) -> str:
+    """Texto [Nombre] o [SPEAKER_XX] agrupando turnos consecutivos del mismo rótulo."""
+    speaker_lines: list[str] = []
+    current_label: str | None = None
+    current_parts: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_label, current_parts
+        text = " ".join(part for part in current_parts if part).strip()
+        if text:
+            text = collapse_repeated_sentences(text)
+            speaker_lines.append(f"[{current_label or 'SPEAKER_UNKNOWN'}] {text}")
+        current_label = None
+        current_parts = []
+
+    for segment in segments:
+        speaker_id = str(segment.get("speaker_id") or "SPEAKER_UNKNOWN")
+        attributed = segment.get("attributed_name")
+        label = (
+            str(attributed).strip()
+            if isinstance(attributed, str) and attributed.strip()
+            else speaker_id
+        )
+        text = str(segment.get("text") or "").strip()
+        if current_label is None:
+            current_label = label
+        elif label != current_label:
+            flush()
+            current_label = label
+        current_parts.append(text)
+    flush()
+    return "\n".join(speaker_lines).rstrip() + "\n"
 
 
 def build_attributed_document(
@@ -398,8 +561,9 @@ def attribute_segments(
         "Los speaker_id (SPEAKER_XX) son los de WhisperX/diarización y no se modifican.",
         "attributed_name solo se completa con evidencia suficiente; si no, queda null.",
         "Estar en el roster de Meet no basta para atribuir un segmento.",
+        "transcripcion_speakers.txt usa el nombre atribuido cuando existe; si no, el SPEAKER_XX.",
     ]
-    mic_attr: SpeakerAttribution | None = None
+    mic_attrs: dict[str, SpeakerAttribution] = {}
     if (
         local_participant_name
         and local_participant_name.strip()
@@ -409,8 +573,8 @@ def attribute_segments(
         and system_audio.is_file()
     ):
         scores = _mic_dominance_scores(segments, microphone_audio, system_audio)
-        mic_attr = resolve_local_microphone_attribution(scores, local_participant_name)
-        if mic_attr is None:
+        mic_attrs = resolve_local_microphone_attributions(scores, local_participant_name)
+        if not mic_attrs:
             notes.append(
                 "No hubo un SPEAKER_* con dominio claro del micrófono local; "
                 "no se atribuyó el participante local."
@@ -441,8 +605,13 @@ def attribute_segments(
             "no se alinearon eventos visuales."
         )
 
-    speaker_map = merge_speaker_attributions(mic_attr, meet_attrs)
-    return build_attributed_document(segments, speaker_map, notes=notes)
+    speaker_map = merge_speaker_attributions(mic_attrs, meet_attrs)
+    document = build_attributed_document(segments, speaker_map, notes=notes)
+    return promote_local_adjacent_segments(
+        document,
+        local_participant_name=local_participant_name,
+        speaker_map=speaker_map,
+    )
 
 
 def write_attributed_transcript(
@@ -463,17 +632,27 @@ def write_attributed_transcript(
     started = meta.get("recording_started_at_epoch_ms")
     started_f = float(started) if isinstance(started, (int, float)) else None
     events = load_meet_events(paths.meet_events)
+    # session.json puede traer el nombre local de la grabación NM.
+    local_name = local_participant_name
+    if not (local_name and str(local_name).strip()):
+        meta_name = meta.get("local_participant_name")
+        if isinstance(meta_name, str) and meta_name.strip():
+            local_name = meta_name.strip()
     document = attribute_segments(
         segments,
         microphone_audio=paths.microphone_audio,
         system_audio=paths.system_audio,
         meet_events=events,
         recording_started_at_epoch_ms=started_f,
-        local_participant_name=local_participant_name,
+        local_participant_name=local_name,
         sync_uncertainty_s=sync_uncertainty_s,
     )
     output_path.write_text(
         json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    paths.speaker_transcript.write_text(
+        render_attributed_speakers_txt(document["segments"]),
         encoding="utf-8",
     )
     return document

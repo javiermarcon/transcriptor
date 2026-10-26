@@ -154,7 +154,7 @@ Comprobaciones:
 | `reunion_mezclada.wav` / `microfono.wav` / `sistema.wav` | Audibles; mic ≠ silencio si hablaste |
 | `session.json` | `session_id`, `recording_started_at_epoch_ms` |
 | `meet_events.jsonl` | Al menos `observation_started` / joins / quizás `active_speaker_*` |
-| `transcripcion_speakers.txt` | Líneas `[SPEAKER_XX] …` |
+| `transcripcion_speakers.txt` | Líneas `[Nombre] …` si hubo atribución; si no, `[SPEAKER_XX] …` |
 | `transcripcion_atribuida.json` | Mismos `speaker_id`; `attributed_name` null o tu nombre local si hubo evidencia mic |
 
 Con **un solo participante**, lo más realista es atribución por mic →

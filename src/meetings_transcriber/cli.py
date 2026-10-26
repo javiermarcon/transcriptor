@@ -8,10 +8,12 @@ from collections.abc import Callable
 from pathlib import Path
 from subprocess import CalledProcessError
 
+from .attribution import write_attributed_transcript
 from .audio import record_meeting
-from .config import load_settings
+from .config import hallucination_phrases_for, load_settings
+from .postprocess import DEFAULT_HALLUCINATION_PHRASES
 from .profiles import create_run_paths, ensure_profile, list_meetings, load_existing_run_paths
-from .transcription import import_existing_audio, transcribe_whisperx
+from .transcription import find_generated_json, import_existing_audio, transcribe_whisperx
 from .visual_evidence import (
     extract_visual_evidence,
     load_visual_evidence_settings_from_env,
@@ -84,6 +86,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Nota opcional al usar --review-visual-evidence",
     )
+    parser.add_argument(
+        "--reattribute",
+        action="store_true",
+        help=(
+            "Rehace transcripcion_atribuida.json y transcripcion_speakers.txt "
+            "con nombres (requiere --meeting; no vuelve a correr WhisperX)"
+        ),
+    )
     return parser
 
 
@@ -147,11 +157,19 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(
                 "--extract-visual-evidence y --review-visual-evidence son mutuamente excluyentes"
             )
+        if args.reattribute and args.meeting is None:
+            parser.error("--reattribute requiere --meeting")
+        if args.reattribute and (
+            args.extract_visual_evidence or args.review_visual_evidence is not None
+        ):
+            parser.error("--reattribute no se combina con evidencia visual")
         if (
             (args.extract_visual_evidence or args.review_visual_evidence is not None)
             and audio_sources
         ):
             parser.error("La evidencia visual no se combina con --audio")
+        if args.reattribute and audio_sources:
+            parser.error("--reattribute no se combina con --audio")
 
         profile = ensure_profile(settings.base_dir, args.profile)
         if args.list_meetings:
@@ -169,6 +187,20 @@ def main(argv: list[str] | None = None) -> int:
             paths = create_run_paths(profile)
         print(f"Perfil: {profile.name}")
         print(f"Directorio: {paths.directory}")
+
+        if args.reattribute:
+            whisper = find_generated_json(paths)
+            phrases = hallucination_phrases_for(settings, DEFAULT_HALLUCINATION_PHRASES)
+            write_attributed_transcript(
+                whisper,
+                paths.attributed_transcript,
+                paths,
+                local_participant_name=settings.local_participant_name,
+                hallucination_phrases=phrases,
+            )
+            print(f"Atribuida: {paths.attributed_transcript}")
+            print(f"Con hablantes: {paths.speaker_transcript}")
+            return 0
 
         if args.review_visual_evidence is not None:
             candidate_id, status = args.review_visual_evidence

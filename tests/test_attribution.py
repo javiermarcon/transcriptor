@@ -10,7 +10,9 @@ from meetings_transcriber.attribution import (
     attribute_segments,
     meet_votes_for_speakers,
     merge_speaker_attributions,
+    render_attributed_speakers_txt,
     resolve_local_microphone_attribution,
+    resolve_local_microphone_attributions,
     resolve_meet_attributions,
     write_attributed_transcript,
 )
@@ -318,6 +320,52 @@ def test_does_not_map_speaker_order_to_fixed_names():
         "SPEAKER_01": {"mic_dominance": 0.41, "speech_s": 5.0},
     }
     assert resolve_local_microphone_attribution(scores, "Javier") is None
+    assert resolve_local_microphone_attributions(scores, "Javier") == {}
+
+
+def test_multiple_mic_dominant_clusters_get_local_name():
+    """Misma voz partida en dos SPEAKER_* con dominio mic claro → ambos locales."""
+    scores = {
+        "SPEAKER_00": {"mic_dominance": 0.95, "speech_s": 8.0},
+        "SPEAKER_01": {"mic_dominance": 0.88, "speech_s": 3.0},
+        "SPEAKER_02": {"mic_dominance": 0.2, "speech_s": 10.0},
+    }
+    attrs = resolve_local_microphone_attributions(scores, "Javier")
+    assert set(attrs) == {"SPEAKER_00", "SPEAKER_01"}
+    assert all(item.attributed_name == "Javier" for item in attrs.values())
+
+
+def test_adjacent_diarization_split_gets_local_name(tmp_path):
+    """Tramo SPEAKER_01 intercalado junto a voz mic → nombre; audio lejano no."""
+    mic, sys = _dual_track_wavs(
+        tmp_path,
+        mic_levels=[(0.0, 2.0, 12000), (4.0, 6.0, 12000)],
+        sys_levels=[(0.0, 2.0, 400), (2.0, 4.0, 8000), (4.0, 6.0, 400), (8.0, 12.0, 9000)],
+        duration_s=12.0,
+    )
+    segments = [
+        {"start": 0.0, "end": 2.0, "text": "Hola.", "speaker": "SPEAKER_00"},
+        {"start": 2.1, "end": 3.5, "text": "Comparto pantalla.", "speaker": "SPEAKER_01"},
+        {"start": 4.0, "end": 6.0, "text": "Sigo yo.", "speaker": "SPEAKER_00"},
+        {"start": 8.5, "end": 12.0, "text": "Video remoto largo.", "speaker": "SPEAKER_01"},
+    ]
+    doc = attribute_segments(
+        segments,
+        microphone_audio=mic,
+        system_audio=sys,
+        local_participant_name="Javier",
+    )
+    by_text = {seg["text"]: seg for seg in doc["segments"]}
+    assert by_text["Hola."]["attributed_name"] == "Javier"
+    assert by_text["Comparto pantalla."]["attributed_name"] == "Javier"
+    assert by_text["Comparto pantalla."]["attribution"]["source"] == "local_microphone_adjacent"
+    assert by_text["Sigo yo."]["attributed_name"] == "Javier"
+    assert by_text["Video remoto largo."]["attributed_name"] is None
+    rendered = render_attributed_speakers_txt(doc["segments"])
+    assert rendered == (
+        "[Javier] Hola. Comparto pantalla. Sigo yo.\n"
+        "[SPEAKER_01] Video remoto largo.\n"
+    )
 
 
 def test_combined_sources_agree(tmp_path):
@@ -405,6 +453,7 @@ def test_write_attributed_transcript_roundtrip(tmp_path):
     assert loaded["schema_version"] == 1
     assert loaded["speakers"]["SPEAKER_00"]["attributed_name"] == "Javier"
     assert doc["segments"][0]["speaker_id"] == "SPEAKER_00"
+    assert paths.speaker_transcript.read_text(encoding="utf-8") == "[Javier] Hola.\n"
 
 
 def test_merge_conflict_drops_both_names():

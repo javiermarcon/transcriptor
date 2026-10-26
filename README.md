@@ -746,8 +746,14 @@ activa (ver atribución más abajo).
 WhisperX diariza sobre `reunion_mezclada.wav` y produce `SPEAKER_00`,
 `SPEAKER_01`, …. Esos IDs **se conservan**.
 
-Tras la transcripción se genera `transcripcion_atribuida.json` (salida
-adicional; no reemplaza `reunion_mezclada.json` ni `transcripcion_speakers.txt`).
+Tras la transcripción se genera `transcripcion_atribuida.json` (no reemplaza
+el JSON de WhisperX). `transcripcion_speakers.txt` se reescribe con el
+**nombre atribuido** cuando hay evidencia (`[Javier] …`); si no, queda
+`[SPEAKER_XX]`. Para refrescar solo la capa de nombres:
+
+```bash
+meetings-transcriber --profile shipii --meeting /ruta/a/Reunion_… --reattribute
+```
 
 **Pistas de audio:** la grabación ya guarda por separado `microfono.wav`
 (local) y `sistema.wav` (remoto/monitor del sink). WhisperX solo oye la
@@ -760,7 +766,8 @@ FFmpeg: las pistas independientes ya existen.
 
 | Fuente | Qué prueba | Límites |
 |---|---|---|
-| `local_microphone` | Dominio claro de energía en `microfono.wav` vs `sistema.wav` en los segmentos de un `SPEAKER_*` | Requiere `LOCAL_PARTICIPANT_NAME` (p. ej. `Javier`). Eco/auriculares pueden confundir. |
+| `local_microphone` | Dominio claro de energía en `microfono.wav` vs `sistema.wav` en los segmentos de un `SPEAKER_*` (varios IDs si WhisperX partió la misma voz) | Requiere `LOCAL_PARTICIPANT_NAME` (p. ej. `Javier`). Eco/auriculares pueden confundir. |
+| `local_microphone_adjacent` | Tramo corto de otro `SPEAKER_*` pegado (≤2 s) a voz ya atribuida por mic | No arrastra audio lejano de pantalla/compartidos. |
 | `meet_active_speaker` | Eventos `active_speaker_changed` alineados al audio con ventana de incertidumbre (~1.5 s) | No usa solo el roster (`participant_joined`). Un blink visual no atribuye un segmento entero. |
 | `combined` | Mic y Meet coinciden en el mismo nombre para el mismo `SPEAKER_*` | Si discrepan, se deja desconocido. |
 
