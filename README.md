@@ -660,6 +660,11 @@ pip install -e '.[dev]'
 .venv/bin/pre-commit run --all-files
 ```
 
+## Validación (extensión + atribución)
+
+Guía de auditoría, pruebas sintéticas y manual unipersonal:
+[`docs/VALIDATION.md`](docs/VALIDATION.md).
+
 ## Native Messaging (extensión Firefox)
 
 La UI de Firefox vive en un repo aparte:

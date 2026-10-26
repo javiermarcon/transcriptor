@@ -425,3 +425,52 @@ def test_merge_conflict_drops_both_names():
         )
     }
     assert merge_speaker_attributions(mic, meet) == {}
+
+
+def test_participant_on_roster_without_speech_evidence_stays_unknown():
+    """Estar en la lista de Meet no atribuye un SPEAKER_* ni un segmento."""
+    started = 1_700_000_000_000.0
+    segments = [
+        {"start": 5.0, "end": 7.0, "text": "alguien habla", "speaker": "SPEAKER_00"},
+    ]
+    events = [
+        {
+            "event_type": "participant_joined",
+            "timestamp_epoch_ms": started + 100,
+            "display_name": "Javier",
+            "participant_key": "dom:javier",
+            "confidence": 0.95,
+        },
+        {
+            "event_type": "participant_joined",
+            "timestamp_epoch_ms": started + 200,
+            "display_name": "Nacho",
+            "participant_key": "dom:nacho",
+            "confidence": 0.95,
+        },
+        {
+            "event_type": "participant_seen",
+            "timestamp_epoch_ms": started + 5_500,
+            "display_name": "Nacho",
+            "participant_key": "dom:nacho",
+            "confidence": 0.9,
+        },
+    ]
+    doc = attribute_segments(
+        segments,
+        meet_events=events,
+        recording_started_at_epoch_ms=started,
+    )
+    assert doc["speakers"] == {}
+    assert doc["segments"][0]["attributed_name"] is None
+    assert doc["segments"][0]["speaker_id"] == "SPEAKER_00"
+
+
+def test_absent_meet_events_preserve_original_ids():
+    segments = [
+        {"start": 0.0, "end": 1.0, "text": "uno", "speaker": "SPEAKER_02"},
+        {"start": 1.0, "end": 2.0, "text": "dos", "speaker": "SPEAKER_03"},
+    ]
+    doc = attribute_segments(segments, meet_events=[], recording_started_at_epoch_ms=0.0)
+    assert [seg["speaker_id"] for seg in doc["segments"]] == ["SPEAKER_02", "SPEAKER_03"]
+    assert all(seg["attributed_name"] is None for seg in doc["segments"])
