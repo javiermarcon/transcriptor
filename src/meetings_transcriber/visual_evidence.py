@@ -302,15 +302,15 @@ def build_sync_notes(
         mp4_av_delta = round(mp4_video_stream_s - mp4_audio_stream_s, 3)
     return {
         "assumption": (
-            "Los timestamps de WhisperX están en segundos relativos al inicio de "
-            "reunion_mezclada.wav. El MP4 se graba en el mismo proceso FFmpeg (video + "
-            "audio AAC de la mezcla muxeados) y se asume alineado desde t≈0, con "
-            "posible desfase A/V de décimas a ~1s. La extracción de evidencia usa "
-            "solo el stream de video del MP4."
+            "Si la transcripción usó audio demuxeado del MP4 "
+            "(audio_transcripcion.wav / fuente mp4_demux), los timestamps de WhisperX "
+            "comparten la línea de tiempo del contenedor con el video. Si se usó "
+            "reunion_mezclada.wav (legado / sin audio en MP4), puede haber desfase "
+            "de décimas a ~1s. La extracción de evidencia usa solo el stream de video."
         ),
         "how_to_measure": (
-            "1) ffprobe format duration de reunion.mp4 vs reunion_mezclada.wav. "
-            "2) ffprobe stream duration video vs audio dentro del MP4. "
+            "1) Leé audio_transcripcion_source.json (mp4_demux vs mixed_wav). "
+            "2) ffprobe duration del audio de transcripción vs stream de video del MP4. "
             "3) Reproducí el MP4 (tiene audio) en t=frase.start y contrastá el JPG."
         ),
         "video_duration_s": video_duration,

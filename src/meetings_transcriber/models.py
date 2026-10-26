@@ -27,6 +27,8 @@ class RunPaths:
     attributed_transcript: Path = field(init=False)
     visual_evidence_dir: Path = field(init=False)
     visual_evidence_index: Path = field(init=False)
+    transcription_audio: Path = field(init=False)
+    transcription_audio_meta: Path = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "video", self.directory / "reunion.mp4")
@@ -38,6 +40,13 @@ class RunPaths:
         object.__setattr__(self, "visual_evidence_dir", self.directory / "evidencia_visual")
         object.__setattr__(
             self, "visual_evidence_index", self.directory / "evidencia_visual" / "index.json"
+        )
+        # Audio canónico para WhisperX cuando se demuxea el AAC del MP4.
+        object.__setattr__(self, "transcription_audio", self.directory / "audio_transcripcion.wav")
+        object.__setattr__(
+            self,
+            "transcription_audio_meta",
+            self.directory / "audio_transcripcion_source.json",
         )
 
 

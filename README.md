@@ -684,6 +684,10 @@ meetings-transcriber --profile shipii --meeting … \
 
 Detalle, desfase WhisperX↔video e inspección: [`docs/VISUAL_EVIDENCE.md`](docs/VISUAL_EVIDENCE.md).
 
+Cuando `reunion.mp4` tiene audio, WhisperX transcribe el AAC demuxeado a
+`audio_transcripcion.wav` (misma línea de tiempo que el video). Si no hay pista
+de audio en el MP4, se usa `reunion_mezclada.wav` como antes.
+
 ## Native Messaging (extensión Firefox)
 
 La UI de Firefox vive en un repo aparte:

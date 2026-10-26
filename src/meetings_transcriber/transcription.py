@@ -14,6 +14,7 @@ from .models import ProfilePaths, RunPaths
 from .postprocess import DEFAULT_HALLUCINATION_PHRASES, process_whisperx_json
 from .profiles import read_hotwords, read_initial_prompt
 from .progress import Progress, parse_progress
+from .transcription_audio import prepare_transcription_audio
 
 OnProgress = Callable[[Progress], None]
 
@@ -30,14 +31,21 @@ def redact_secrets(text: str) -> str:
     )
 
 
-def build_whisperx_command(settings: Settings, profile: ProfilePaths, paths: RunPaths) -> list[str]:
+def build_whisperx_command(
+    settings: Settings,
+    profile: ProfilePaths,
+    paths: RunPaths,
+    *,
+    audio: Path | None = None,
+) -> list[str]:
     if settings.whisperx_bin is None:
         raise RuntimeError("WhisperX no está disponible")
     if not settings.hf_token:
         raise RuntimeError("HF_TOKEN no está configurado")
 
+    audio_path = audio if audio is not None else paths.mixed_audio
     command = [
-        str(settings.whisperx_bin), str(paths.mixed_audio),
+        str(settings.whisperx_bin), str(audio_path),
         "--model", settings.model,
         "--language", "es",
         "--device", settings.device,
@@ -122,10 +130,36 @@ def run_streaming(
         raise RuntimeError(f"WhisperX falló (código {return_code}).\n{detail}")
 
 
-def find_generated_json(paths: RunPaths) -> Path:
-    if paths.json_result.is_file() and paths.json_result.stat().st_size:
-        return paths.json_result
-    candidates = sorted(paths.directory.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+_NON_WHISPERX_JSON_NAMES = frozenset(
+    {
+        "session.json",
+        "transcripcion_atribuida.json",
+        "audio_transcripcion_source.json",
+        "com.meetings.transcriptor.json",
+    }
+)
+
+
+def find_generated_json(paths: RunPaths, *, audio: Path | None = None) -> Path:
+    """Localiza el JSON de WhisperX (stem del audio de entrada o legado)."""
+    preferred: list[Path] = []
+    if audio is not None:
+        preferred.append(paths.directory / f"{audio.stem}.json")
+    preferred.append(paths.directory / "audio_transcripcion.json")
+    preferred.append(paths.json_result)  # reunion_mezclada.json (legado)
+    for candidate in preferred:
+        if candidate.is_file() and candidate.stat().st_size:
+            return candidate
+
+    candidates = sorted(
+        (
+            path
+            for path in paths.directory.glob("*.json")
+            if path.name not in _NON_WHISPERX_JSON_NAMES
+        ),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
     if not candidates:
         raise FileNotFoundError("WhisperX terminó sin generar un JSON")
     return candidates[0]
@@ -139,14 +173,23 @@ def transcribe_whisperx(
     on_progress: OnProgress | None = None,
     echo_stdout: bool = True,
 ) -> None:
-    duration = ffprobe_duration(paths.mixed_audio)
+    audio, source = prepare_transcription_audio(paths)
+    if echo_stdout:
+        print(f"Audio para WhisperX: {audio.name} (fuente: {source})")
+    else:
+        print(
+            f"Audio para WhisperX: {audio.name} (fuente: {source})",
+            file=sys.stderr,
+            flush=True,
+        )
+    duration = ffprobe_duration(audio)
     run_streaming(
-        build_whisperx_command(settings, profile, paths),
+        build_whisperx_command(settings, profile, paths, audio=audio),
         duration,
         on_progress=on_progress,
         echo_stdout=echo_stdout,
     )
-    generated = find_generated_json(paths)
+    generated = find_generated_json(paths, audio=audio)
     phrases = hallucination_phrases_for(settings, DEFAULT_HALLUCINATION_PHRASES)
     process_whisperx_json(
         generated,

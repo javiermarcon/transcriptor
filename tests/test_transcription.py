@@ -463,10 +463,18 @@ def test_transcribe_whisperx_calls_pipeline(tmp_path, monkeypatch):
         run_dir / "transcripcion_speakers.txt",
     )
 
+    monkeypatch.setattr(
+        "meetings_transcriber.transcription.prepare_transcription_audio",
+        lambda *_a, **_k: (paths.mixed_audio, "mixed_wav"),
+    )
     monkeypatch.setattr("meetings_transcriber.transcription.ffprobe_duration", lambda *_args, **_kwargs: 1.0)
     monkeypatch.setattr("meetings_transcriber.transcription.run_streaming", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("meetings_transcriber.transcription.find_generated_json", lambda *_args, **_kwargs: paths.json_result)
     monkeypatch.setattr("meetings_transcriber.transcription.process_whisperx_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "meetings_transcriber.transcription.write_attributed_transcript",
+        lambda *_args, **_kwargs: None,
+    )
 
     paths.json_result.write_text("{}", encoding="utf-8")
 

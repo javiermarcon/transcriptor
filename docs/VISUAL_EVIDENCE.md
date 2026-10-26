@@ -14,14 +14,17 @@ Archivos relevantes:
 | Archivo | Rol |
 |---|---|
 | `reunion.mp4` | Video H.264 **+ audio AAC de la mezcla** (mismo FFmpeg) |
-| `reunion_mezclada.wav` | Audio que usa WhisperX (reloj de los timestamps) |
-| `reunion_mezclada.json` | Segmentos WhisperX (`start`/`end`/`speaker`) |
+| `audio_transcripcion.wav` | PCM demuxeado del MP4 → fuente preferida de WhisperX |
+| `audio_transcripcion_source.json` | Indica si WhisperX usó `mp4_demux` o `mixed_wav` |
+| `reunion_mezclada.wav` | Mix PCM paralelo (fallback si el MP4 no tiene audio) |
+| `reunion_mezclada.json` / `audio_transcripcion.json` | Segmentos WhisperX |
 | `transcripcion_atribuida.json` | Preferido si existe (incluye nombres) |
 | `evidencia_visual/` | Salida de esta fase (se crea al extraer) |
 
-**Importante:** el MP4 casi siempre trae audio embebido. La extracción de
-fotogramas usa solo el stream de video (`-map 0:v:0 -an`). El audio del MP4
-sirve para inspección manual (reproducir y contrastar con el JPG).
+**Importante:** el MP4 casi siempre trae audio embebido. WhisperX, cuando hay
+pista de audio en el MP4, transcribe el audio **demuxeado** de ese contenedor
+para compartir reloj con el video. La extracción de fotogramas usa solo el
+stream de video (`-map 0:v:0 -an`).
 
 ## 1. Prerrequisitos
 
@@ -85,8 +88,9 @@ $MEETING/evidencia_visual/
 
 ## 4. Medir sincronización (recomendado antes de confiar)
 
-WhisperX marca tiempo sobre `reunion_mezclada.wav`. El MP4 se graba en paralelo;
-en una sesión real de este entorno se midió Δ ≈ 0.65 s entre duraciones.
+Con `mp4_demux`, WhisperX marca tiempo sobre el audio del propio MP4 (mejor
+alineación con fotogramas). Con `mixed_wav` (legado), el reloj es
+`reunion_mezclada.wav` y puede haber Δ de décimas a ~1 s respecto al video.
 
 ```bash
 ffprobe -v error -show_entries format=duration -of default=nw=1 "$MEETING/reunion.mp4"
