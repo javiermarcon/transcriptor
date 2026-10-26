@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,77 @@ def test_load_env_file_parses_exported_and_plain(tmp_path, monkeypatch):
 
 def test_load_env_file_does_nothing_when_file_missing(tmp_path):
     load_env_file(tmp_path / "missing.env")
+
+
+def test_extract_visual_evidence_requires_meeting(tmp_path, monkeypatch):
+    env_file = tmp_path / "config.env"
+    env_file.write_text("")
+    monkeypatch.setattr(
+        "meetings_transcriber.cli.load_settings", lambda project_dir: make_settings(tmp_path)
+    )
+    with pytest.raises(SystemExit):
+        main(["--profile", "Shipii", "--extract-visual-evidence", "--config", str(env_file)])
+
+
+def test_main_extract_visual_evidence(tmp_path, monkeypatch, capsys):
+    env_file = tmp_path / "config.env"
+    env_file.write_text("")
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("meetings_transcriber.cli.load_settings", lambda project_dir: settings)
+    profile_dir = tmp_path / "Shipii"
+    profile_dir.mkdir()
+    (profile_dir / "initial_prompt.txt").write_text("hola", encoding="utf-8")
+    (profile_dir / "hotwords.txt").write_text("", encoding="utf-8")
+    meeting = profile_dir / "Reunion_2026-01-01_12-00-00"
+    meeting.mkdir()
+    (meeting / "reunion_mezclada.wav").write_bytes(b"RIFF")
+    (meeting / "reunion.mp4").write_bytes(b"fake")
+    (meeting / "transcripcion_atribuida.json").write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "start": 1.0,
+                        "end": 2.0,
+                        "text": "Fijate acá.",
+                        "speaker_id": "SPEAKER_00",
+                        "attributed_name": None,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[object] = []
+
+    def fake_extract(paths, settings=None, runner=None):
+        calls.append(paths)
+        return {
+            "candidates": [{"id": "ve-0000"}],
+            "sync": {"video_minus_audio_s": 0.2},
+        }
+
+    monkeypatch.setattr("meetings_transcriber.cli.extract_visual_evidence", fake_extract)
+    monkeypatch.setattr(
+        "meetings_transcriber.cli.load_visual_evidence_settings_from_env",
+        lambda: object(),
+    )
+
+    code = main(
+        [
+            "--profile",
+            "Shipii",
+            "--meeting",
+            str(meeting),
+            "--extract-visual-evidence",
+            "--config",
+            str(env_file),
+        ]
+    )
+    assert code == 0
+    assert calls
+    assert "Candidatos: 1" in capsys.readouterr().out
 
 
 def test_main_list_profiles(tmp_path, monkeypatch, capsys):

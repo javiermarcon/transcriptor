@@ -50,6 +50,8 @@ transcriptor/
 │       ├── meet_events.py
 │       ├── attribution.py
 │       ├── audio_energy.py
+│       ├── spatial_cues.py
+│       ├── visual_evidence.py
 │       ├── postprocess.py
 │       ├── profiles.py
 │       ├── progress.py
@@ -664,6 +666,23 @@ pip install -e '.[dev]'
 
 Guía de auditoría, pruebas sintéticas y manual unipersonal:
 [`docs/VALIDATION.md`](docs/VALIDATION.md).
+
+## Evidencia visual (fotogramas + frases espaciales)
+
+Fase 1: detecta frases del tipo «fijate acá» / «este botón», extrae fotogramas
+de `reunion.mp4` alrededor del intervalo (con contexto configurable) y deja un
+índice revisable en `evidencia_visual/`. **No** identifica el UI señalado.
+
+```bash
+meetings-transcriber --profile shipii \
+  --meeting ~/proyectos/meetings/textos_reuniones/shipii/Reunion_… \
+  --extract-visual-evidence
+
+meetings-transcriber --profile shipii --meeting … \
+  --review-visual-evidence ve-0000 useful
+```
+
+Detalle, desfase WhisperX↔video e inspección: [`docs/VISUAL_EVIDENCE.md`](docs/VISUAL_EVIDENCE.md).
 
 ## Native Messaging (extensión Firefox)
 
